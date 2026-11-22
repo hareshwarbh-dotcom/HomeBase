@@ -988,9 +988,9 @@ function openSettings(){
     <h2>Settings</h2>
     <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center" onclick="openAdmin()"><span>🎨 Display &amp; theme</span><span class="sub">Text size, dark mode, colour ›</span></button>
     <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="openCloud()"><span>☁️ Cloud sync</span><span class="sub">${cloudSummary()} ›</span></button>
-    <form onsubmit="event.preventDefault();S.people={...S.people,[me()]:this.elements.me.value.trim()||'Me',[other()]:this.elements.partner.value.trim()||'Partner'};save();closeModal();render();toast('Saved')">
-      <label>Your name</label><input name="me" value="${esc(who(me()))}">
-      <label>Spouse's name</label><input name="partner" value="${esc(who(other()))}">
+    <form onsubmit="event.preventDefault();saveNames(this)">
+      <label>Your name</label><input name="myname" value="${esc(who(me()))}" autocomplete="off">
+      <label>Spouse's name</label><input name="spousename" value="${esc(who(other()))}" autocomplete="off">
       <div class="formbtns"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn primary">Save names</button></div>
     </form>
     <h3>Your data</h3>
@@ -1003,6 +1003,10 @@ function openSettings(){
       ${S.sample?`<button class="btn" onclick="clearSample()">Clear sample data</button>`:''}
       <button class="btn danger" onclick="if(confirm(cloud.hid?'Erase everything — on this phone AND for everyone in your household?':'Erase everything?')){const st=S.settings,pp=S.people;S=blank();S.settings=st;S.people=pp;S.varselImported=S.v2=S.v3=true;save();closeModal();render()}">Erase all</button>
     </div>`);
+}
+function saveNames(f){
+  const mine = f.elements.myname.value.trim() || 'Me', theirs = f.elements.spousename.value.trim() || 'Partner';
+  S.people = {...S.people, [me()]:mine, [other()]:theirs}; save(); closeModal(); render(); toast('Names saved');
 }
 function clearSample(){ const st=S.settings, pp=S.people; S=blank(); S.settings=st; S.people=pp; S.varselImported=S.v2=S.v3=true; save(); closeModal(); render(); toast('Fresh start ✨'); }
 function exportData(){
