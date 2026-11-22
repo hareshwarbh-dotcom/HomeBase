@@ -129,7 +129,7 @@ html.comfy .stat{padding:.8rem 1rem}
 <body>
 <div class="app">
   <header>
-    <h1 id="ptitle" onclick="titleTap()">AaHa<span>Home</span></h1>
+    <h1 id="ptitle" onclick="titleTap()">Home<span>Base</span></h1>
     <button class="iconbtn" onclick="openSettings()" title="Settings">⚙︎<span id="syncdot" class="syncdot off"></span></button>
   </header>
   <main id="main"></main>
@@ -141,7 +141,7 @@ html.comfy .stat{padding:.8rem 1rem}
 <script>
 /* ---------- storage ---------- */
 const KEY = 'homebase.v1';
-const blank = () => ({settings:{whoami:'a'},people:{a:'Hari',b:'Wife'},tasks:[],obligations:[],paid:{},expenses:[],subs:[],reminders:[],groceries:[],help:[],dates:[]});
+const blank = () => ({settings:{whoami:'a'},people:{a:'Fred',b:''},tasks:[],obligations:[],paid:{},expenses:[],subs:[],reminders:[],groceries:[],help:[],dates:[]});
 let S;
 function load(){
   try{ const raw = localStorage.getItem(KEY); if(raw) return Object.assign(blank(), JSON.parse(raw)); }catch(e){}
@@ -182,7 +182,8 @@ function dueTag(s){
 }
 function me(){ return S.settings.whoami==='b' ? 'b' : 'a'; }
 function other(){ return me()==='a' ? 'b' : 'a'; }
-function who(a){ return a==='both' ? 'Both' : (S.people?.[a] || a); }
+function who(a){ return a==='both' ? 'Both' : (S.people?.[a] || 'Partner'); }
+function hasPartner(){ return !!(S.people && S.people[other()]); }
 function oblDue(o, mk){ const [y,m]=mk.split('-').map(Number); const dim=new Date(y,m,0).getDate(); return `${mk}-${pad(Math.min(o.dueDay,dim))}`; }
 function isPaid(key, mk){ return (S.paid[mk]||[]).includes(key); }
 function nextOccurrence(s){
@@ -211,40 +212,6 @@ function compress(file){
       img.onerror = rej; img.src = r.result; };
     r.onerror = rej; r.readAsDataURL(file);
   });
-}
-
-
-/* ---------- one-time import of bills from VarSel ---------- */
-function importVarsel(){
-  if(S.varselImported) return;
-  const has = (col,name) => S[col].some(x => (x.name||x.title||'').toLowerCase() === name.toLowerCase());
-  const months = (from,to) => { const out=[]; let m=from; while(m<=to){ out.push(m); m=monthKey(addMonths(m+'-01',1)); } return out; };
-  const bills = [
-    {name:'Personal Loan',    amount:11062, category:'Loan / EMI', startMonth:'2026-04', paid:months('2026-04','2026-10')},
-    {name:'Car Loan',         amount:0,     category:'Loan / EMI', startMonth:'2026-04', endMonth:'2026-06', paid:months('2026-04','2026-06')},
-    {name:'Home Loan',        amount:0,     category:'Loan / EMI', startMonth:'2026-04', paid:months('2026-04','2026-10')},
-    {name:'Home Loan Extra',  amount:0,     category:'Loan / EMI', startMonth:'2026-05', paid:months('2026-05','2026-10')},
-    {name:'Rent 801',         amount:0,     category:'Housing',    startMonth:'2026-04', paid:months('2026-04','2026-10')},
-  ];
-  bills.forEach(b => {
-    if(has('obligations', b.name)) return;
-    const id = uid();
-    S.obligations.push({id, name:b.name, amount:b.amount, dueDay:5, category:b.category, freq:'monthly', startMonth:b.startMonth, endMonth:b.endMonth||''});
-    b.paid.forEach(m => { (S.paid[m] = S.paid[m]||[]).push('obl:'+id); });
-  });
-  const t = today(), fix = 'Set the real renewal date and amount.';
-  const rems = [
-    {title:'Maintenance',                 type:'Other',     date:'2026-11-05', repeat:'3',  notes:'Paid quarterly (May, Aug). Add the amount here.'},
-    {title:'Term Insurance HB',           type:'Insurance', date:'2027-04-05', repeat:'12', notes:'Last paid Apr 2026.'},
-    {title:'LIC Policy',                  type:'Insurance', date:'2027-01-05', repeat:'3',  notes:'Paid quarterly (Apr, Jul, Oct 2026).'},
-    {title:'TVS Jupiter Insurance',       type:'Insurance', date:'2027-08-05', repeat:'12', notes:'Last paid Aug 2026.'},
-    {title:'Bear 650 Insurance',          type:'Insurance', date:'2027-09-05', repeat:'12', notes:'Last paid Sep 2026.'},
-    {title:'Term Insurance AM',           type:'Insurance', date:t, repeat:'12', notes:fix},
-    {title:'Medical Insurance HB + AM',   type:'Insurance', date:t, repeat:'12', notes:fix},
-    {title:'Medical Insurance BK',        type:'Insurance', date:t, repeat:'12', notes:fix},
-  ];
-  rems.forEach(r => { if(!has('reminders', r.title)) S.reminders.push({id:uid(), ...r}); });
-  S.varselImported = true; save();
 }
 
 
@@ -287,7 +254,7 @@ window.addEventListener('hashchange', ()=>{ if(location.hash==='#admin') openAdm
 /* ---------- v3: fixed people instead of "me/partner" (needed once data is shared) ---------- */
 function migrateV3(){
   if(S.v3) return;
-  S.people = {a:S.settings.me || S.people?.a || 'Hari', b:S.settings.partner || S.people?.b || 'Wife'};
+  S.people = {a:S.settings.me || S.people?.a || 'Fred', b:S.settings.partner || S.people?.b || 'Wilma'};
   S.settings.whoami = S.settings.whoami || 'a';
   S.tasks.forEach(t=>{ if(t.assignee==='me') t.assignee='a'; else if(t.assignee==='partner') t.assignee='b'; });
   delete S.settings.me; delete S.settings.partner;
@@ -435,7 +402,7 @@ function openCloud(msg){
   const back = `<button type="button" class="btn" onclick="openSettings()">‹ Settings</button>`;
   if(!cloud.url || !cloud.key){
     return showModal(`<h2>☁️ Cloud sync</h2>
-      <p class="sub">Share AaHaHome with your spouse. Paste the two values from your Supabase project (Project URL and the publishable key).</p>${err}
+      <p class="sub">Share your home with a partner or family member. Paste the two values from your Supabase project (Project URL and the publishable key).</p>${err}
       <form onsubmit="event.preventDefault();cloudSaveKeys(this)">
         <label>Project URL</label><input name="url" placeholder="https://xxxx.supabase.co" autocomplete="off" autocapitalize="off" required>
         <label>Publishable key</label><input name="key" placeholder="sb_publishable_… or eyJ…" autocomplete="off" autocapitalize="off" required>
@@ -458,9 +425,9 @@ function openCloud(msg){
   if(!cloud.hid){
     return showModal(`<h2>☁️ Your household</h2>
       <p class="sub">Signed in as ${esc(sbUser.email)}.</p>${err}
-      <div class="card"><div class="title">Start a household</div><p class="sub" style="margin:.2rem 0 .5rem">You'll get an invite code for your spouse. Everything on this phone is uploaded.</p>
+      <div class="card"><div class="title">Start a household</div><p class="sub" style="margin:.2rem 0 .5rem">You'll get an invite code to share. Everything on this phone is uploaded.</p>
         <button class="btn primary" onclick="cloudCreate()">Create household</button></div>
-      <div class="card"><div class="title">Join your spouse's household</div><p class="sub" style="margin:.2rem 0 .3rem">Enter the 6-letter code from their phone. This phone's current data will be replaced with the shared data.</p>
+      <div class="card"><div class="title">Join someone's household</div><p class="sub" style="margin:.2rem 0 .3rem">Enter the 6-letter code from their phone. This phone's current data will be replaced with the shared data.</p>
         <form class="quickadd" onsubmit="event.preventDefault();cloudJoin(this.elements.code.value)"><input name="code" placeholder="e.g. 7F3K2A" autocapitalize="characters" autocomplete="off" maxlength="6"><button class="btn primary">Join</button></form></div>
       <div class="actions">${back}<button class="btn" onclick="cloudSignOut()">Sign out</button></div>`);
   }
@@ -468,12 +435,12 @@ function openCloud(msg){
   showModal(`<h2>☁️ Cloud sync</h2>${err}
     <div class="card"><div class="sub">Status</div><div class="title" id="cloudstatus">${cloudStatusText()}</div>
       <div class="sub" style="margin-top:.3rem">${esc(sbUser.email)} · you are <b style="color:var(--ink)">${esc(who(me()))}</b></div></div>
-    <div class="card" style="text-align:center"><div class="sub">Invite code for your spouse</div>
+    <div class="card" style="text-align:center"><div class="sub">Invite code to share</div>
       <div class="mtitle big" style="letter-spacing:4px;margin:.2rem 0">${esc(cloud.code||'——')}</div>
       <div class="actions" style="justify-content:center"><a class="btn" href="https://wa.me/?text=${wa}" target="_blank" rel="noopener">Send on WhatsApp</a></div></div>
     <div class="actions">
       <button class="btn" onclick="cloudPull(true).then(cloudPush).then(()=>openCloud())">🔄 Sync now</button>
-      <button class="btn" onclick="cloudSwapMe()">I'm ${esc(who(other()))}, not ${esc(who(me()))}</button>
+      ${hasPartner()?'':'<!--'}<button class="btn" onclick="cloudSwapMe()">I'm ${esc(who(other()))}, not ${esc(who(me()))}</button>${hasPartner()?'':'-->'}
       <button class="btn danger" onclick="if(confirm('Stop syncing on this phone? Your data stays here.')) cloudSignOut(true)">Disconnect</button>
     </div>
     <div class="formbtns">${back}<button class="btn primary" onclick="closeModal()">Done</button></div>`);
@@ -512,10 +479,10 @@ async function cloudJoin(code){
   try{
     const { data, error } = await sb.rpc('join_household', {p_code:code});
     if(error) throw error;
-    const st = S.settings; S = blank(); S.settings = {...st, whoami:'b'}; S.varselImported = S.v2 = S.v3 = true;
+    const st = S.settings; S = blank(); S.settings = {...st, whoami:'b'}; S.varselImported = S.v2 = S.v3 = true; S.onboarded = true;
     cloud.hid = data; cloud.code = code; cloud.since = null; synced = {};
     applying = true; try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} applying = false; saveCloud();
-    await cloudStart(); render(); openCloud(); toast('Joined! Data synced 🎉');
+    await cloudStart(); if(!S.people?.[me()]){ S.people={...S.people,[me()]:'Partner'}; save(); } render(); openCloud(); toast('Joined! Set your name in Settings 🎉');
   }catch(e){ openCloud(e.message||'Could not join'); }
 }
 function cloudSwapMe(){ S.settings.whoami = other(); applying = true; try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} applying = false; render(); openCloud(); }
@@ -527,6 +494,58 @@ async function cloudSignOut(disconnect){
 }
 function cloudForget(){ cloud = {}; synced = {}; sb = null; saveCloud(); openCloud(); }
 
+/* ---------- welcome (first launch) + guide ---------- */
+function migrateV4(){
+  if('onboarded' in S) return;
+  const any = COLS.some(c=>(S[c]||[]).length) || !!cloud.hid;
+  S.onboarded = any; save();
+}
+function viewWelcome(){
+  return `
+  <div style="padding:.4rem 0 1rem">
+    <div class="mtitle big" style="font-size:1.9rem;line-height:1.15;margin-bottom:.4rem">Welcome to<br>Home<span style="color:var(--saffron)">Base</span></div>
+    <p class="sub" style="font-size:.95rem">One calm place for your home — chores, bills, reminders and groceries.</p>
+  </div>
+  ${[['📸','Snap a task','Photo the mess, set a due date. Done in seconds.'],
+     ['💰','Never miss a payment','EMIs, rent, insurance and subscriptions — monthly, quarterly or yearly.'],
+     ['🗓️','See what’s coming','One timeline of everything due, with reminders before the date.'],
+     ['👫','Share if you like','Add a partner, assign tasks to each other, sync across phones.']]
+    .map(([i,t,d])=>`<div class="card row"><div class="src" style="font-size:1.4rem">${i}</div><div class="grow"><div class="title">${t}</div><div class="meta">${d}</div></div></div>`).join('')}
+  <form class="card" style="margin-top:.8rem" onsubmit="event.preventDefault();finishWelcome(this)">
+    <label style="margin-top:0">What should we call you?</label>
+    <input name="myname" placeholder="e.g. Fred" autocomplete="off" required>
+    <label style="display:flex;gap:.5rem;align-items:center;font-weight:500;margin-top:.8rem">
+      <input type="checkbox" name="share" style="width:auto;min-height:0" onchange="this.form.querySelector('#pwrap').style.display=this.checked?'block':'none'"> I share my home with someone
+    </label>
+    <div id="pwrap" style="display:none"><label>Their name</label><input name="partnername" placeholder="e.g. Wilma" autocomplete="off"></div>
+    <button class="btn accent" style="width:100%;margin-top:1rem;min-height:2.8rem">Get started</button>
+  </form>
+  <div class="actions" style="justify-content:center">
+    <button class="btn" onclick="S.onboarded=true;save();render();openCloud()">I have an invite code</button>
+    <button class="btn" onclick="openGuide()">📖 How it works</button>
+  </div>`;
+}
+function finishWelcome(f){
+  const n = f.elements.myname.value.trim(); if(!n) return;
+  const p = f.elements.share.checked ? (f.elements.partnername.value.trim() || 'Partner') : '';
+  S.people = {a:n, b:p}; S.settings.whoami = 'a'; S.onboarded = true; save(); render();
+  toast(`Welcome, ${n}! Tap + to add your first item`);
+}
+function openGuide(){
+  const sec = (t,b) => `<h3>${t}</h3><div class="card" style="font-size:.9rem;line-height:1.5">${b}</div>`;
+  showModal(`<h2>📖 How to use HomeBase</h2>
+    ${sec('The basics', `The <b>+</b> button adds whatever fits the tab you're on. <b>Home</b> shows what needs attention now. Everything works offline.`)}
+    ${sec('✅ Tasks', `Snap a photo, add a due date and priority. Tap a task to see the photo; tap the circle to complete it — <b>Undo</b> appears if you tick by mistake. With a partner, assign tasks to each other or both.`)}
+    ${sec('💰 Money', `<b>Obligations</b>: anything you pay — EMIs, rent, insurance, subscriptions — monthly, quarterly, half-yearly, yearly or one-time. Use ‹ › to see past or future months and tick what's paid.<br><b>Expenses</b>: day-to-day spending by category.`)}
+    ${sec('🗓️ Upcoming', `One timeline of payments and to-do reminders (car service, PUC, documents). Each item can remind you days before. When a to-do is done, you can log its cost as an expense.`)}
+    ${sec('🧺 Household', `Grocery list, house help (leaves and salary) and important dates like birthdays.`)}
+    ${sec('👫 Sharing', `Settings → <b>People</b> to add a partner. Settings → <b>☁️ Cloud sync</b> to sync between phones: one person creates a household and shares the 6-letter code; the other joins with it.`)}
+    ${sec('📱 Install as an app', `<b>iPhone:</b> open in Safari → Share → Add to Home Screen.<br><b>Android:</b> Chrome → ⋮ → Install app.`)}
+    ${sec('🔔 Alerts & backups', `Settings → <b>Add all to phone calendar</b> for real phone alerts. Without Cloud sync, data lives only on this device — use <b>Export backup</b> now and then.`)}
+    ${sec('🎨 Look & feel', `Settings → <b>Display &amp; theme</b> for text size, density, dark mode and accent colour.`)}
+    <div class="formbtns"><button class="btn primary" onclick="closeModal()">Got it</button></div>`);
+}
+
 /* ---------- ui state ---------- */
 const ui = { view:'home', taskFilter:'open', money:'obligations', house:'groceries', expMonth:monthKey(), oblMonth:monthKey(), expanded:null };
 const NAV = [['home','🏠','Home'],['tasks','✅','Tasks'],['money','💰','Money'],['reminders','🗓️','Upcoming'],['house','🧺','Household']];
@@ -535,8 +554,12 @@ function go(v, sub){ ui.view=v; if(sub){ if(v==='money') ui.money=sub; if(v==='h
 function render(){
   document.getElementById('nav').innerHTML = NAV.map(([k,ic,l]) =>
     `<button class="${ui.view===k?'on':''}" onclick="go('${k}')"><span class="ic">${ic}</span>${l}</button>`).join('');
-  const T = {home:'AaHa<span>Home</span>',tasks:'Tasks',money:'Money',reminders:'Upcoming',house:'Household'};
+  const T = {home:'Home<span>Base</span>',tasks:'Tasks',money:'Money',reminders:'Upcoming',house:'Household'};
   document.getElementById('ptitle').innerHTML = T[ui.view];
+  const welcome = !S.onboarded;
+  document.querySelector('nav').style.display = welcome ? 'none' : '';
+  document.querySelector('.fab').style.display = welcome ? 'none' : '';
+  if(welcome){ document.getElementById('ptitle').innerHTML = ''; document.getElementById('main').innerHTML = viewWelcome(); return; }
   const v = {home:viewHome, tasks:viewTasks, money:viewMoney, reminders:viewReminders, house:viewHouse}[ui.view];
   document.getElementById('main').innerHTML = v();
 }
@@ -554,7 +577,7 @@ function feed(){
     }
   });
   S.reminders.filter(r=>!r.done).forEach(r=>out.push({kind:'rem', id:r.id, src:REM_ICON[r.type]||'📌', title:r.title, sub:r.type+(r.repeat&&r.repeat!=='0'?' · '+REP_LABEL[r.repeat]:''), date:r.date, lead:remindOf(r), go:"go('reminders')"}));
-  S.tasks.filter(t=>!t.done && t.due).forEach(t=>out.push({kind:'task', id:t.id, src:'✅', title:t.title, sub:'Task · '+who(t.assignee), date:t.due, lead:7, go:"go('tasks')"}));
+  S.tasks.filter(t=>!t.done && t.due).forEach(t=>out.push({kind:'task', id:t.id, src:'✅', title:t.title, sub:hasPartner()?'Task · '+who(t.assignee):'Task', date:t.due, lead:7, go:"go('tasks')"}));
   S.dates.forEach(d=>out.push({kind:'date', id:d.id, src:'🎉', title:d.name, sub:d.type, date:nextOccurrence(d.date), lead:7, go:"go('house','dates')"}));
   return out.sort((a,b)=>a.date.localeCompare(b.date));
 }
@@ -584,7 +607,7 @@ function viewHome(){
     <p class="sub">${greet}, ${esc(who(me()))} · ${new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}</p>
     <h3>At a glance</h3>
     <div class="stats">
-      <div class="stat hl" onclick="go('tasks',me())"><div class="n">${mine}</div><div class="l">Tasks on you · ${open.length} open total</div></div>
+      <div class="stat hl" onclick="go('tasks',me())"><div class="n">${hasPartner()?mine:open.length}</div><div class="l">${hasPartner()?'Tasks on you · '+open.length+' open total':'Open tasks'}</div></div>
       <div class="stat" onclick="go('money','expenses')"><div class="n">${inr(spent)}</div><div class="l">Spent this month</div></div>
       <div class="stat" onclick="go('money','obligations')"><div class="n">${inr(pendingAmt)}</div><div class="l">${pending.length} obligation${pending.length===1?'':'s'} unpaid</div></div>
       <div class="stat" onclick="go('reminders')"><div class="n">${in30}</div><div class="l">Coming up in 30 days</div></div>
@@ -600,7 +623,7 @@ function viewTasks(){
   const pr = {high:0,medium:1,low:2};
   let list = S.tasks.filter(t => f==='done' ? t.done : !t.done && (f==='open' || t.assignee===f || ((f==='a'||f==='b') && t.assignee==='both')));
   list.sort((a,b)=> (a.due||'9999').localeCompare(b.due||'9999') || pr[a.priority]-pr[b.priority]);
-  const chips = [['open','All open'],[me(),who(me())],[other(),who(other())],['done','Done']];
+  const chips = hasPartner() ? [['open','All open'],[me(),who(me())],[other(),who(other())],['done','Done']] : [['open','Open'],['done','Done']];
   return `
     <div class="chips">${chips.map(([k,l])=>`<button class="chip ${f===k?'on':''}" onclick="ui.taskFilter='${k}';render()">${esc(l)}</button>`).join('')}</div>
     ${list.length ? list.map(taskCard).join('') : `<div class="empty">${f==='done'?'No completed tasks yet':'No tasks here. Tap + and snap a photo to add one.'}</div>`}
@@ -614,7 +637,7 @@ function taskCard(t){
       ${t.photo ? `<img class="thumb" src="${t.photo}" alt="">` : ''}
       <div class="grow">
         <div class="title">${esc(t.title)}</div>
-        <div class="meta">👤 ${esc(who(t.assignee))} <span class="pill p-${t.priority}">${t.priority}</span> ${t.done?'<span class="pill ok">Done</span>':dueTag(t.due)}</div>
+        <div class="meta">${hasPartner()?'👤 '+esc(who(t.assignee)):''} <span class="pill p-${t.priority}">${t.priority}</span> ${t.done?'<span class="pill ok">Done</span>':dueTag(t.due)}</div>
       </div>
       <button class="check ${t.done?'on':''}" onclick="event.stopPropagation();toggleTask('${t.id}')">✓</button>
     </div>
@@ -789,13 +812,7 @@ function calendarAll(){
 /* ---------- one-time upgrade: payments move from Reminders/Subscriptions into Obligations ---------- */
 function migrateV2(){
   if(S.v2) return;
-  const H = {
-    'Maintenance':{freq:'quarterly',start:'2026-05',paid:['2026-05','2026-08'],cat:'Maintenance'},
-    'Term Insurance HB':{freq:'yearly',start:'2026-04',paid:['2026-04']},
-    'LIC Policy':{freq:'quarterly',start:'2026-04',paid:['2026-04','2026-07','2026-10']},
-    'TVS Jupiter Insurance':{freq:'yearly',start:'2026-08',paid:['2026-08']},
-    'Bear 650 Insurance':{freq:'yearly',start:'2026-09',paid:['2026-09']},
-  };
+  const H = {};
   const R2F = {'1':'monthly','3':'quarterly','6':'half','12':'yearly','0':'once'};
   S.reminders.filter(r=>r.type==='Insurance' || r.title==='Maintenance').forEach(r=>{
     const h = H[r.title], id = uid();
@@ -880,10 +897,10 @@ const FORMS = {
   task:{col:'tasks',title:'Task',fields:()=>[
     {k:'photo',l:'Photo',t:'photo'},
     {k:'title',l:'What needs doing?',t:'text',req:1},
-    {k:'assignee',l:'Assign to',t:'select',o:[[other(),who(other())],[me(),who(me())+' (me)'],['both','Both']]},
+    ...(hasPartner() ? [{k:'assignee',l:'Assign to',t:'select',o:[[other(),who(other())],[me(),who(me())+' (me)'],['both','Both']]}] : []),
     {k:'due',l:'Due date',t:'date'},
     {k:'priority',l:'Priority',t:'select',o:[['medium','Medium'],['high','High'],['low','Low']]},
-    {k:'notes',l:'Notes',t:'textarea'}], def:()=>({assignee:other(),priority:'medium',due:today(),done:false})},
+    {k:'notes',l:'Notes',t:'textarea'}], def:()=>({assignee:hasPartner()?other():me(),priority:'medium',due:today(),done:false})},
   obligation:{col:'obligations',title:'Obligation',fields:()=>[
     {k:'name',l:'Name',t:'text',req:1,ph:'e.g. Home loan EMI, LIC policy'},
     {k:'amount',l:'Amount (₹)',t:'number',req:1},
@@ -989,15 +1006,21 @@ function fab(){
 }
 
 /* ---------- settings ---------- */
-function openSettings(){
+function openSettings(draftName){
   showModal(`
     <h2>Settings</h2>
     <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center" onclick="openAdmin()"><span>🎨 Display &amp; theme</span><span class="sub">Text size, dark mode, colour ›</span></button>
     <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="openCloud()"><span>☁️ Cloud sync</span><span class="sub">${cloudSummary()} ›</span></button>
+    <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="openGuide()"><span>📖 How to use HomeBase</span><span class="sub">›</span></button>
+    <h3>People</h3>
     <form onsubmit="event.preventDefault();saveNames(this)">
-      <label>Your name</label><input name="myname" value="${esc(who(me()))}" autocomplete="off">
-      <label>Spouse's name</label><input name="spousename" value="${esc(who(other()))}" autocomplete="off">
-      <div class="formbtns"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn primary">Save names</button></div>
+      <label>Your name</label><input name="myname" value="${esc(draftName ?? S.people?.[me()] ?? '')}" autocomplete="off">
+      ${hasPartner() || ui.addingPartner ? `
+        <label>Partner's name</label><input name="partnername" value="${esc(S.people?.[other()]||'')}" placeholder="e.g. Wilma" autocomplete="off" ${ui.addingPartner?'autofocus':''}>
+        ${hasPartner()?`<button type="button" class="btn danger" style="margin-top:.4rem" onclick="removePartner()">Remove partner</button>`:''}`
+      : `<button type="button" class="btn" style="margin-top:.6rem" onclick="ui.addingPartner=true;openSettings(this.form.elements.myname.value)">+ Add a partner</button>
+         <p class="sub" style="margin-top:.3rem">Optional — for assigning tasks to each other.</p>`}
+      <div class="formbtns"><button type="button" class="btn" onclick="ui.addingPartner=false;closeModal()">Cancel</button><button class="btn primary">Save</button></div>
     </form>
     <h3>Your data</h3>
     <p class="sub">${cloud.hid ? 'Synced with your household. A backup export is still a good idea now and then.' : 'Stored on this phone only. Export a backup now and then.'}</p>
@@ -1011,8 +1034,15 @@ function openSettings(){
     </div>`);
 }
 function saveNames(f){
-  const mine = f.elements.myname.value.trim() || 'Me', theirs = f.elements.spousename.value.trim() || 'Partner';
-  S.people = {...S.people, [me()]:mine, [other()]:theirs}; save(); closeModal(); render(); toast('Names saved');
+  const mine = f.elements.myname.value.trim() || 'Me';
+  const pf = f.elements.partnername; const theirs = pf ? (pf.value.trim() || 'Partner') : (S.people?.[other()]||'');
+  S.people = {...S.people, [me()]:mine, [other()]:theirs}; ui.addingPartner = false; save(); closeModal(); render(); toast('Saved');
+}
+function removePartner(){
+  if(!confirm(`Remove ${who(other())}? Tasks assigned to them (or to both) move to you.`)) return;
+  S.tasks.forEach(t=>{ if(t.assignee!==me()) t.assignee = me(); });
+  S.people = {...S.people, [other()]:''}; if(ui.taskFilter===other()) ui.taskFilter='open';
+  save(); openSettings(); render(); toast('Partner removed');
 }
 function clearSample(){ const st=S.settings, pp=S.people; S=blank(); S.settings=st; S.people=pp; S.varselImported=S.v2=S.v3=true; save(); closeModal(); render(); toast('Fresh start ✨'); }
 function exportData(){
@@ -1029,6 +1059,7 @@ S = load();
 applyUI();
 migrateV2();
 migrateV3();
+migrateV4();
 render();
 cloudBoot();
 if(location.hash==='#admin') openAdmin();
