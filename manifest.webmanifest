@@ -1,6 +1,6 @@
 {
-  "name": "HomeBase",
-  "short_name": "HomeBase",
+  "name": "AaHaHome",
+  "short_name": "AaHaHome",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
