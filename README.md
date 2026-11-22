@@ -2,7 +2,7 @@
 
 **One calm place for your home**: chores, bills, reminders and groceries, for one person or shared with a partner.
 
-Live app: **https://aahahome.netlify.app** (installs on the phone as *AaHaHome*)
+Live app: **https://aahahome.pages.dev** (installs on the phone as *AaHaHome*)
 
 ---
 
@@ -36,7 +36,7 @@ Also included:
 ## How it's built
 
 - A single `index.html` file (plain HTML, CSS and JavaScript). No build step.
-- Hosted on **Netlify**, auto-deployed from this GitHub repo.
+- Hosted on **Cloudflare Pages**, auto-deployed from this GitHub repo (free: ~500 updates/month, unlimited visitors).
 - Data is stored on the device (`localStorage`), and optionally synced through **Supabase**.
 
 ### Files in this repo
@@ -55,7 +55,7 @@ Also included:
 
 1. Get the new `index.html` (or edit it).
 2. GitHub → **Add file → Upload files**, drop it in, then **Commit changes**.
-3. Netlify publishes it automatically in about a minute. Reopen the app to see it.
+3. Cloudflare Pages publishes it automatically in about a minute. Reopen the app to see it.
 
 Your data is not touched by updates: it lives on each device and in Supabase, not in this repo.
 
