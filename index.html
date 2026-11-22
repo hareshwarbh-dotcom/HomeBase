@@ -107,6 +107,9 @@ textarea{min-height:4.5rem;resize:vertical}
 .swatch{width:2.2rem;height:2.2rem;border-radius:50%;border:3px solid var(--bg);box-shadow:0 0 0 1px var(--line);cursor:pointer}
 .swatch.on{box-shadow:0 0 0 2px var(--ink)}
 .adminrow{margin-bottom:.9rem}
+.syncdot{position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:var(--green)}
+.syncdot.off{display:none} .syncdot.pending,.syncdot.syncing{background:#E8A21C} .syncdot.error{background:var(--red)}
+a.btn{display:inline-flex;align-items:center;text-decoration:none}
 /* comfortable density */
 html.comfy .card{padding:.85rem 1rem;margin-bottom:.7rem}
 html.comfy .row{gap:.8rem}
@@ -120,7 +123,7 @@ html.comfy .stat{padding:.8rem 1rem}
 <div class="app">
   <header>
     <h1 id="ptitle" onclick="titleTap()">Home<span>Base</span></h1>
-    <button class="iconbtn" onclick="openSettings()" title="Settings">⚙︎</button>
+    <button class="iconbtn" onclick="openSettings()" title="Settings">⚙︎<span id="syncdot" class="syncdot off"></span></button>
   </header>
   <main id="main"></main>
 </div>
@@ -131,7 +134,7 @@ html.comfy .stat{padding:.8rem 1rem}
 <script>
 /* ---------- storage ---------- */
 const KEY = 'homebase.v1';
-const blank = () => ({settings:{me:'Haresh',partner:'Wife'},tasks:[],obligations:[],paid:{},expenses:[],subs:[],reminders:[],groceries:[],help:[],dates:[]});
+const blank = () => ({settings:{whoami:'a'},people:{a:'Hari',b:'Wife'},tasks:[],obligations:[],paid:{},expenses:[],subs:[],reminders:[],groceries:[],help:[],dates:[]});
 let S;
 function load(){
   try{ const raw = localStorage.getItem(KEY); if(raw) return Object.assign(blank(), JSON.parse(raw)); }catch(e){}
@@ -140,6 +143,7 @@ function load(){
 function save(){
   try{ localStorage.setItem(KEY, JSON.stringify(S)); }
   catch(e){ toast('Storage is full — delete some old photos'); }
+  if(typeof cloudSchedulePush==='function') cloudSchedulePush();
 }
 function seed(){ return blank(); }
 
@@ -169,7 +173,9 @@ function dueTag(s){
   if(n<=7) return `<span class="pill soon">In ${n} days</span>`;
   return `<span class="pill later">${fmtDate(s)}</span>`;
 }
-function who(a){ return a==='me' ? S.settings.me : a==='partner' ? S.settings.partner : 'Both'; }
+function me(){ return S.settings.whoami==='b' ? 'b' : 'a'; }
+function other(){ return me()==='a' ? 'b' : 'a'; }
+function who(a){ return a==='both' ? 'Both' : (S.people?.[a] || a); }
 function oblDue(o, mk){ const [y,m]=mk.split('-').map(Number); const dim=new Date(y,m,0).getDate(); return `${mk}-${pad(Math.min(o.dueDay,dim))}`; }
 function isPaid(key, mk){ return (S.paid[mk]||[]).includes(key); }
 function nextOccurrence(s){
@@ -271,6 +277,249 @@ function openAdmin(){
 window.matchMedia && matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', ()=>{ if(uiPrefs().theme==='auto') applyUI(); });
 window.addEventListener('hashchange', ()=>{ if(location.hash==='#admin') openAdmin(); });
 
+/* ---------- v3: fixed people instead of "me/partner" (needed once data is shared) ---------- */
+function migrateV3(){
+  if(S.v3) return;
+  S.people = {a:S.settings.me || S.people?.a || 'Hari', b:S.settings.partner || S.people?.b || 'Wife'};
+  S.settings.whoami = S.settings.whoami || 'a';
+  S.tasks.forEach(t=>{ if(t.assignee==='me') t.assignee='a'; else if(t.assignee==='partner') t.assignee='b'; });
+  delete S.settings.me; delete S.settings.partner;
+  S.v3 = true; save();
+}
+
+/* =====================  CLOUD SYNC (Supabase)  ===================== */
+const COLS = ['tasks','obligations','expenses','reminders','groceries','help','dates'];
+const CKEY = 'homebase.cloud', SKEY = 'homebase.synced';
+let cloud = (()=>{ try{ return JSON.parse(localStorage.getItem(CKEY))||{}; }catch(e){ return {}; } })();
+let synced = (()=>{ try{ return JSON.parse(localStorage.getItem(SKEY))||{}; }catch(e){ return {}; } })();
+let sb = null, sbUser = null, rtChannel = null, pushTimer = null, applying = false, syncState = 'off', lastSyncAt = null, pollTimer = null;
+function saveCloud(){ try{ localStorage.setItem(CKEY, JSON.stringify(cloud)); localStorage.setItem(SKEY, JSON.stringify(synced)); }catch(e){} }
+function h53(str){ let h1=0xdeadbeef, h2=0x41c6ce57; for(let i=0;i<str.length;i++){ const c=str.charCodeAt(i); h1=Math.imul(h1^c,2654435761); h2=Math.imul(h2^c,1597334677); }
+  h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909); h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909); return (4294967296*(2097151&h2)+(h1>>>0)).toString(36); }
+function snapshot(){
+  const m = {};
+  COLS.forEach(c=>(S[c]||[]).forEach(x=>{ m[c+'|'+x.id] = x; }));
+  Object.entries(S.paid||{}).forEach(([mk,arr])=>(arr||[]).forEach(k=>{ m['paid|'+mk+'|'+k] = true; }));
+  m['meta|people'] = S.people;
+  return m;
+}
+function setSyncState(st){ syncState = st; const d = document.getElementById('syncdot'); if(d){ d.className = 'syncdot '+st; } const el=document.getElementById('cloudstatus'); if(el) el.innerHTML = cloudStatusText(); }
+function cloudStatusText(){
+  if(!cloud.hid) return 'Not connected';
+  if(syncState==='syncing') return '🔄 Syncing…';
+  if(syncState==='pending') return '🟠 Changes waiting to sync';
+  if(syncState==='error') return '🔴 Offline — will sync when back online';
+  return '🟢 Synced'+(lastSyncAt?' · '+lastSyncAt.toLocaleTimeString('en-IN',{hour:'numeric',minute:'2-digit'}):'');
+}
+function cloudSummary(){ return cloud.hid ? 'Connected' : cloud.url ? 'Sign in' : 'Off'; }
+
+function loadSupabaseLib(){
+  if(window.supabase?.createClient) return Promise.resolve();
+  return new Promise((res,rej)=>{ const sc=document.createElement('script'); sc.src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'; sc.onload=res; sc.onerror=()=>rej(new Error('Could not load Supabase (offline?)')); document.head.appendChild(sc); });
+}
+async function cloudClient(){
+  if(sb) return sb;
+  if(!cloud.url || !cloud.key) throw new Error('Add your Supabase URL and key first');
+  await loadSupabaseLib();
+  sb = window.supabase.createClient(cloud.url, cloud.key, {auth:{persistSession:true, autoRefreshToken:true, storageKey:'homebase.auth'}});
+  return sb;
+}
+async function cloudBoot(){
+  if(!cloud.url || !cloud.key) return;
+  try{
+    await cloudClient();
+    const { data } = await sb.auth.getSession(); sbUser = data?.session?.user || null;
+    if(sbUser && cloud.hid) await cloudStart();
+  }catch(e){ setSyncState('error'); }
+}
+async function cloudStart(){
+  setSyncState('syncing');
+  await cloudPull(!cloud.since);
+  await cloudPush();
+  cloudSubscribe();
+  clearInterval(pollTimer); pollTimer = setInterval(()=>{ if(document.visibilityState==='visible') cloudPull(false); }, 30000);
+}
+function rowApply(r){
+  const key = r.col+'|'+r.id;
+  if(r.updated_at && (!cloud.since || r.updated_at > cloud.since)) cloud.since = r.updated_at;
+  const newHash = r.deleted ? undefined : h53(JSON.stringify(r.col==='paid' ? true : r.data));
+  if(synced[key]===newHash) return false;   // nothing new (e.g. echo of our own change)
+  if(COLS.includes(r.col)){
+    const arr = S[r.col] = S[r.col]||[]; const i = arr.findIndex(x=>x.id===r.id);
+    if(r.deleted){ if(i>=0) arr.splice(i,1); }
+    else if(r.data){ if(i>=0) arr[i]=r.data; else arr.push(r.data); }
+  } else if(r.col==='paid'){
+    const cut = r.id.indexOf('|'), mk = r.id.slice(0,cut), k = r.id.slice(cut+1);
+    const arr = S.paid[mk] = S.paid[mk]||[]; const i = arr.indexOf(k);
+    if(r.deleted){ if(i>=0) arr.splice(i,1); } else if(i<0) arr.push(k);
+  } else if(r.col==='meta' && r.id==='people' && !r.deleted && r.data){ S.people = r.data; }
+  if(r.deleted) delete synced[key]; else synced[key] = newHash;
+  return true;
+}
+function applyRows(rows){
+  if(!rows.length) return;
+  applying = true;
+  let changed = false; rows.forEach(r=>{ if(rowApply(r)) changed = true; });
+  try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){}
+  saveCloud(); applying = false;
+  if(changed) safeRender();
+}
+let needRender = false;
+function safeRender(){
+  const a = document.activeElement;
+  if(document.querySelector('#modal .overlay') || (a && /INPUT|TEXTAREA|SELECT/.test(a.tagName))){ needRender = true; return; }
+  render();
+}
+document.addEventListener('focusout', ()=>setTimeout(()=>{ if(needRender && !document.querySelector('#modal .overlay')){ needRender=false; render(); } }, 50));
+async function cloudPull(full){
+  if(!sb || !cloud.hid) return;
+  try{
+    let from = 0; const since = full || !cloud.since ? '1970-01-01T00:00:00Z' : new Date(new Date(cloud.since).getTime()-2000).toISOString();
+    for(;;){
+      const { data, error } = await sb.from('items').select('*').eq('household_id', cloud.hid).gte('updated_at', since).order('updated_at',{ascending:true}).range(from, from+499);
+      if(error) throw error;
+      applyRows(data||[]);
+      if(!data || data.length<500) break; from += 500;
+    }
+    lastSyncAt = new Date(); setSyncState(pendingChanges().length ? 'pending' : 'ok');
+  }catch(e){ setSyncState('error'); }
+}
+function pendingChanges(){
+  const snap = snapshot(), rows = [];
+  Object.entries(snap).forEach(([key,val])=>{ const hh = h53(JSON.stringify(val)); if(synced[key]!==hh) rows.push({key, hh, val}); });
+  Object.keys(synced).forEach(key=>{ if(!(key in snap)) rows.push({key, del:true}); });
+  return rows;
+}
+function cloudSchedulePush(){
+  if(applying || !sb || !cloud.hid) return;
+  setSyncState('pending'); clearTimeout(pushTimer); pushTimer = setTimeout(cloudPush, 700);
+}
+let pushing = false;
+async function cloudPush(){
+  if(!sb || !cloud.hid || pushing) return;
+  const ch = pendingChanges(); if(!ch.length){ setSyncState('ok'); return; }
+  pushing = true; setSyncState('syncing');
+  try{
+    for(let i=0;i<ch.length;i+=100){
+      const part = ch.slice(i,i+100);
+      const rows = part.map(c=>{ const cut=c.key.indexOf('|'); return {household_id:cloud.hid, col:c.key.slice(0,cut), id:c.key.slice(cut+1), data:c.del?null:c.val, deleted:!!c.del}; });
+      const { error } = await sb.from('items').upsert(rows, {onConflict:'household_id,col,id'});
+      if(error) throw error;
+      part.forEach(c=>{ if(c.del) delete synced[c.key]; else synced[c.key]=c.hh; });
+      saveCloud();
+    }
+    lastSyncAt = new Date(); pushing = false;
+    setSyncState(pendingChanges().length ? 'pending' : 'ok');
+    if(pendingChanges().length) cloudSchedulePush();
+  }catch(e){ pushing = false; setSyncState('error'); clearTimeout(pushTimer); pushTimer = setTimeout(cloudPush, 15000); }
+}
+function cloudSubscribe(){
+  if(rtChannel) sb.removeChannel(rtChannel);
+  rtChannel = sb.channel('hb-'+cloud.hid)
+    .on('postgres_changes', {event:'*', schema:'public', table:'items', filter:'household_id=eq.'+cloud.hid}, p=>{ if(p.new && p.new.col) applyRows([p.new]); lastSyncAt=new Date(); setSyncState(syncState==='error'?'ok':syncState); })
+    .subscribe();
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible' && sb && cloud.hid){ cloudPull(false).then(cloudPush); } });
+window.addEventListener('online', ()=>{ if(sb && cloud.hid){ cloudPull(false).then(cloudPush); } });
+
+/* ---------- cloud UI ---------- */
+function openCloud(msg){
+  const err = msg ? `<p class="sub" style="color:var(--red);margin:.4rem 0">${esc(msg)}</p>` : '';
+  const back = `<button type="button" class="btn" onclick="openSettings()">‹ Settings</button>`;
+  if(!cloud.url || !cloud.key){
+    return showModal(`<h2>☁️ Cloud sync</h2>
+      <p class="sub">Share HomeBase with your spouse. Paste the two values from your Supabase project (Project URL and the publishable key).</p>${err}
+      <form onsubmit="event.preventDefault();cloudSaveKeys(this)">
+        <label>Project URL</label><input name="url" placeholder="https://xxxx.supabase.co" autocomplete="off" autocapitalize="off" required>
+        <label>Publishable key</label><input name="key" placeholder="sb_publishable_… or eyJ…" autocomplete="off" autocapitalize="off" required>
+        <div class="formbtns">${back}<button class="btn primary">Continue</button></div>
+      </form>`);
+  }
+  if(!sbUser){
+    return showModal(`<h2>☁️ Sign in</h2>
+      <p class="sub">Each of you uses your own email and password.</p>${err}
+      <form onsubmit="event.preventDefault()">
+        <label>Email</label><input name="email" type="email" autocomplete="username" autocapitalize="off" required>
+        <label>Password</label><input name="pw" type="password" autocomplete="current-password" minlength="6" required>
+        <div class="formbtns">
+          <button type="button" class="btn" onclick="cloudAuth(this.form,'up')">Create account</button>
+          <button type="button" class="btn primary" onclick="cloudAuth(this.form,'in')">Sign in</button>
+        </div>
+      </form>
+      <div class="actions">${back}<button class="btn danger" onclick="cloudForget()">Change Supabase keys</button></div>`);
+  }
+  if(!cloud.hid){
+    return showModal(`<h2>☁️ Your household</h2>
+      <p class="sub">Signed in as ${esc(sbUser.email)}.</p>${err}
+      <div class="card"><div class="title">Start a household</div><p class="sub" style="margin:.2rem 0 .5rem">You'll get an invite code for your spouse. Everything on this phone is uploaded.</p>
+        <button class="btn primary" onclick="cloudCreate()">Create household</button></div>
+      <div class="card"><div class="title">Join your spouse's household</div><p class="sub" style="margin:.2rem 0 .3rem">Enter the 6-letter code from their phone. This phone's current data will be replaced with the shared data.</p>
+        <form class="quickadd" onsubmit="event.preventDefault();cloudJoin(this.elements.code.value)"><input name="code" placeholder="e.g. 7F3K2A" autocapitalize="characters" autocomplete="off" maxlength="6"><button class="btn primary">Join</button></form></div>
+      <div class="actions">${back}<button class="btn" onclick="cloudSignOut()">Sign out</button></div>`);
+  }
+  const wa = encodeURIComponent(`Join our HomeBase 🏠\n1. Open ${location.origin}\n2. ⚙︎ Settings → Cloud sync, paste the same Supabase URL and key\n3. Create your account and join with code: ${cloud.code||''}`);
+  showModal(`<h2>☁️ Cloud sync</h2>${err}
+    <div class="card"><div class="sub">Status</div><div class="title" id="cloudstatus">${cloudStatusText()}</div>
+      <div class="sub" style="margin-top:.3rem">${esc(sbUser.email)} · you are <b style="color:var(--ink)">${esc(who(me()))}</b></div></div>
+    <div class="card" style="text-align:center"><div class="sub">Invite code for your spouse</div>
+      <div class="mtitle big" style="letter-spacing:4px;margin:.2rem 0">${esc(cloud.code||'——')}</div>
+      <div class="actions" style="justify-content:center"><a class="btn" href="https://wa.me/?text=${wa}" target="_blank" rel="noopener">Send on WhatsApp</a></div></div>
+    <div class="actions">
+      <button class="btn" onclick="cloudPull(true).then(cloudPush).then(()=>openCloud())">🔄 Sync now</button>
+      <button class="btn" onclick="cloudSwapMe()">I'm ${esc(who(other()))}, not ${esc(who(me()))}</button>
+      <button class="btn danger" onclick="if(confirm('Stop syncing on this phone? Your data stays here.')) cloudSignOut(true)">Disconnect</button>
+    </div>
+    <div class="formbtns">${back}<button class="btn primary" onclick="closeModal()">Done</button></div>`);
+}
+async function cloudSaveKeys(f){
+  let url = f.elements.url.value.trim().replace(/\/+$/,'').replace(/\/rest\/v1$/,''); const key = f.elements.key.value.trim();
+  if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)) return openCloud('That URL should look like https://xxxx.supabase.co');
+  cloud.url = url; cloud.key = key; sb = null; saveCloud();
+  try{ await cloudClient(); openCloud(); }catch(e){ openCloud(e.message); }
+}
+async function cloudAuth(f, mode){
+  if(!f.reportValidity()) return;
+  try{
+    await cloudClient();
+    const creds = {email:f.elements.email.value.trim(), password:f.elements.pw.value};
+    const { data, error } = mode==='up' ? await sb.auth.signUp(creds) : await sb.auth.signInWithPassword(creds);
+    if(error) throw error;
+    sbUser = data.user || data.session?.user;
+    if(!data.session) throw new Error('Account created, but email confirmation is on. Turn off "Confirm email" in Supabase, then sign in.');
+    if(cloud.hid) await cloudStart();
+    openCloud();
+  }catch(e){ openCloud(e.message||'Sign-in failed'); }
+}
+async function cloudCreate(){
+  try{
+    const { data, error } = await sb.rpc('create_household', {p_name:'Home'});
+    if(error) throw error;
+    const h = Array.isArray(data) ? data[0] : data;
+    cloud.hid = h.id; cloud.code = h.invite_code; cloud.since = null; synced = {}; S.settings.whoami = S.settings.whoami || 'a';
+    saveCloud(); save(); await cloudStart(); openCloud(); toast('Household created — share the code');
+  }catch(e){ openCloud(e.message||'Could not create household'); }
+}
+async function cloudJoin(code){
+  code = (code||'').trim().toUpperCase(); if(code.length<6) return openCloud('Enter the 6-letter code');
+  if(!confirm("This phone's current HomeBase data will be replaced with your household's shared data. Continue?")) return;
+  try{
+    const { data, error } = await sb.rpc('join_household', {p_code:code});
+    if(error) throw error;
+    const st = S.settings; S = blank(); S.settings = {...st, whoami:'b'}; S.varselImported = S.v2 = S.v3 = true;
+    cloud.hid = data; cloud.code = code; cloud.since = null; synced = {};
+    applying = true; try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} applying = false; saveCloud();
+    await cloudStart(); render(); openCloud(); toast('Joined! Data synced 🎉');
+  }catch(e){ openCloud(e.message||'Could not join'); }
+}
+function cloudSwapMe(){ S.settings.whoami = other(); applying = true; try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} applying = false; render(); openCloud(); }
+async function cloudSignOut(disconnect){
+  try{ if(rtChannel) sb.removeChannel(rtChannel); await sb?.auth.signOut(); }catch(e){}
+  clearInterval(pollTimer); rtChannel = null; sbUser = null;
+  if(disconnect){ cloud.hid = null; cloud.code = null; cloud.since = null; synced = {}; }
+  saveCloud(); setSyncState('off'); openCloud();
+}
+function cloudForget(){ cloud = {}; synced = {}; sb = null; saveCloud(); openCloud(); }
+
 /* ---------- ui state ---------- */
 const ui = { view:'home', taskFilter:'open', money:'obligations', house:'groceries', expMonth:monthKey(), oblMonth:monthKey(), expanded:null };
 const NAV = [['home','🏠','Home'],['tasks','✅','Tasks'],['money','💰','Money'],['reminders','🗓️','Upcoming'],['house','🧺','Household']];
@@ -315,7 +564,7 @@ function feedRow(x, withActions){
 function viewHome(){
   const mk = monthKey();
   const open = S.tasks.filter(t=>!t.done);
-  const mine = open.filter(t=>t.assignee==='me'||t.assignee==='both').length;
+  const mine = open.filter(t=>t.assignee===me()||t.assignee==='both').length;
   const spent = S.expenses.filter(e=>monthKey(e.date)===mk).reduce((a,e)=>a+Number(e.amount),0);
   const pending = S.obligations.filter(o=>oblApplies(o,mk)&&!isPaid('obl:'+o.id,mk));
   const pendingAmt = pending.reduce((a,o)=>a+Number(o.amount),0);
@@ -325,10 +574,10 @@ function viewHome(){
   const hr = new Date().getHours();
   const greet = hr<12?'Good morning':hr<17?'Good afternoon':'Good evening';
   return `
-    <p class="sub">${greet}, ${esc(S.settings.me)} · ${new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}</p>
+    <p class="sub">${greet}, ${esc(who(me()))} · ${new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}</p>
     <h3>At a glance</h3>
     <div class="stats">
-      <div class="stat hl" onclick="go('tasks','me')"><div class="n">${mine}</div><div class="l">Tasks on you · ${open.length} open total</div></div>
+      <div class="stat hl" onclick="go('tasks',me())"><div class="n">${mine}</div><div class="l">Tasks on you · ${open.length} open total</div></div>
       <div class="stat" onclick="go('money','expenses')"><div class="n">${inr(spent)}</div><div class="l">Spent this month</div></div>
       <div class="stat" onclick="go('money','obligations')"><div class="n">${inr(pendingAmt)}</div><div class="l">${pending.length} obligation${pending.length===1?'':'s'} unpaid</div></div>
       <div class="stat" onclick="go('reminders')"><div class="n">${in30}</div><div class="l">Coming up in 30 days</div></div>
@@ -342,9 +591,9 @@ function viewHome(){
 function viewTasks(){
   const f = ui.taskFilter;
   const pr = {high:0,medium:1,low:2};
-  let list = S.tasks.filter(t => f==='done' ? t.done : !t.done && (f==='open' || (f==='me' && t.assignee!=='partner') || (f==='partner' && t.assignee!=='me')));
+  let list = S.tasks.filter(t => f==='done' ? t.done : !t.done && (f==='open' || t.assignee===f || ((f==='a'||f==='b') && t.assignee==='both')));
   list.sort((a,b)=> (a.due||'9999').localeCompare(b.due||'9999') || pr[a.priority]-pr[b.priority]);
-  const chips = [['open','All open'],['me',S.settings.me],['partner',S.settings.partner],['done','Done']];
+  const chips = [['open','All open'],[me(),who(me())],[other(),who(other())],['done','Done']];
   return `
     <div class="chips">${chips.map(([k,l])=>`<button class="chip ${f===k?'on':''}" onclick="ui.taskFilter='${k}';render()">${esc(l)}</button>`).join('')}</div>
     ${list.length ? list.map(taskCard).join('') : `<div class="empty">${f==='done'?'No completed tasks yet':'No tasks here. Tap + and snap a photo to add one.'}</div>`}
@@ -625,10 +874,10 @@ const FORMS = {
   task:{col:'tasks',title:'Task',fields:()=>[
     {k:'photo',l:'Photo',t:'photo'},
     {k:'title',l:'What needs doing?',t:'text',req:1},
-    {k:'assignee',l:'Assign to',t:'select',o:[['me',S.settings.me],['partner',S.settings.partner],['both','Both']]},
+    {k:'assignee',l:'Assign to',t:'select',o:[[other(),who(other())],[me(),who(me())+' (me)'],['both','Both']]},
     {k:'due',l:'Due date',t:'date'},
     {k:'priority',l:'Priority',t:'select',o:[['medium','Medium'],['high','High'],['low','Low']]},
-    {k:'notes',l:'Notes',t:'textarea'}], def:()=>({assignee:'partner',priority:'medium',due:today(),done:false})},
+    {k:'notes',l:'Notes',t:'textarea'}], def:()=>({assignee:other(),priority:'medium',due:today(),done:false})},
   obligation:{col:'obligations',title:'Obligation',fields:()=>[
     {k:'name',l:'Name',t:'text',req:1,ph:'e.g. Home loan EMI, LIC policy'},
     {k:'amount',l:'Amount (₹)',t:'number',req:1},
@@ -714,7 +963,7 @@ function del(col, id, quiet){
   toast('Deleted', ()=>{ S[col].splice(i,0,item); save(); render(); });
 }
 function showModal(html){ document.getElementById('modal').innerHTML = `<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="sheet">${html}</div></div>`; }
-function closeModal(){ document.getElementById('modal').innerHTML=''; }
+function closeModal(){ document.getElementById('modal').innerHTML=''; if(needRender){ needRender=false; render(); } }
 
 /* ---------- FAB ---------- */
 function fab(){
@@ -738,23 +987,24 @@ function openSettings(){
   showModal(`
     <h2>Settings</h2>
     <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center" onclick="openAdmin()"><span>🎨 Display &amp; theme</span><span class="sub">Text size, dark mode, colour ›</span></button>
-    <form onsubmit="event.preventDefault();S.settings.me=this.elements.me.value.trim()||'Me';S.settings.partner=this.elements.partner.value.trim()||'Partner';save();closeModal();render();toast('Saved')">
-      <label>Your name</label><input name="me" value="${esc(S.settings.me)}">
-      <label>Spouse's name</label><input name="partner" value="${esc(S.settings.partner)}">
+    <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="openCloud()"><span>☁️ Cloud sync</span><span class="sub">${cloudSummary()} ›</span></button>
+    <form onsubmit="event.preventDefault();S.people={...S.people,[me()]:this.elements.me.value.trim()||'Me',[other()]:this.elements.partner.value.trim()||'Partner'};save();closeModal();render();toast('Saved')">
+      <label>Your name</label><input name="me" value="${esc(who(me()))}">
+      <label>Spouse's name</label><input name="partner" value="${esc(who(other()))}">
       <div class="formbtns"><button type="button" class="btn" onclick="closeModal()">Cancel</button><button class="btn primary">Save names</button></div>
     </form>
     <h3>Your data</h3>
-    <p class="sub">Everything is stored in this browser only. Export a backup now and then.</p>
+    <p class="sub">${cloud.hid ? 'Synced with your household. A backup export is still a good idea now and then.' : 'Stored on this phone only. Export a backup now and then.'}</p>
     <div class="actions">
       <button class="btn" onclick="calendarAll()">📅 Add all to phone calendar</button>
       <button class="btn" onclick="exportData()">⬇ Export backup</button>
       <button class="btn" onclick="document.getElementById('imp').click()">⬆ Import backup</button>
       <input type="file" id="imp" accept="application/json" style="display:none" onchange="importData(this)">
       ${S.sample?`<button class="btn" onclick="clearSample()">Clear sample data</button>`:''}
-      <button class="btn danger" onclick="if(confirm('Erase everything?')){S=blank();S.varselImported=true;S.v2=true;save();closeModal();render()}">Erase all</button>
+      <button class="btn danger" onclick="if(confirm(cloud.hid?'Erase everything — on this phone AND for everyone in your household?':'Erase everything?')){const st=S.settings,pp=S.people;S=blank();S.settings=st;S.people=pp;S.varselImported=S.v2=S.v3=true;save();closeModal();render()}">Erase all</button>
     </div>`);
 }
-function clearSample(){ const st=S.settings; S=blank(); S.settings=st; S.varselImported=true; S.v2=true; save(); closeModal(); render(); toast('Fresh start ✨'); }
+function clearSample(){ const st=S.settings, pp=S.people; S=blank(); S.settings=st; S.people=pp; S.varselImported=S.v2=S.v3=true; save(); closeModal(); render(); toast('Fresh start ✨'); }
 function exportData(){
   const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([JSON.stringify(S)],{type:'application/json'}));
   a.download=`homebase-backup-${today()}.json`; a.click();
@@ -767,9 +1017,10 @@ function importData(inp){
 
 S = load();
 applyUI();
-importVarsel();
 migrateV2();
+migrateV3();
 render();
+cloudBoot();
 if(location.hash==='#admin') openAdmin();
 </script>
 </body>
