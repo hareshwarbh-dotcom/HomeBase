@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#FAF7F2">
+<meta name="theme-color" content="#121419">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="AaHaHome">
@@ -114,6 +114,14 @@ textarea{min-height:4.5rem;resize:vertical}
 .swatch{width:2.2rem;height:2.2rem;border-radius:50%;border:3px solid var(--bg);box-shadow:0 0 0 1px var(--line);cursor:pointer}
 .swatch.on{box-shadow:0 0 0 2px var(--ink)}
 .adminrow{margin-bottom:.9rem}
+.mgroup{background:var(--card);border:1px solid var(--line);border-radius:.8rem;overflow:hidden;margin-top:.7rem}
+.mrow{display:flex;align-items:center;gap:.7rem;width:100%;min-height:3rem;padding:.55rem .85rem;background:none;border:none;border-bottom:1px solid var(--line);font:inherit;color:var(--ink);text-align:left;cursor:pointer}
+.mgroup .mrow:last-child{border-bottom:none}
+.mrow .mi{font-size:1.1rem;width:1.5rem;text-align:center;flex-shrink:0}
+.mrow .mt{flex:1;font-weight:500}
+.mrow .ms{color:var(--muted);font-size:.82rem;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mrow .mc{color:var(--muted);font-size:1.1rem}
+.mrow.danger .mt{color:var(--red)} .mrow.danger .mc{display:none}
 .syncdot{position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:var(--green)}
 .syncdot.off{display:none} .syncdot.pending,.syncdot.syncing{background:#E8A21C} .syncdot.error{background:var(--red)}
 a.btn{display:inline-flex;align-items:center;text-decoration:none}
@@ -224,7 +232,7 @@ function compress(file){
 
 
 /* ---------- display / admin panel (hidden: tap the page title 5 times, or open with #admin) ---------- */
-const UI_DEF = {fs:'m', density:'compact', theme:'light', accent:'saffron', badge:'auto'};
+const UI_DEF = {fs:'m', density:'compact', theme:'dark', accent:'saffron', badge:'auto'};
 const FS = {s:'13px', m:'14px', l:'15.5px', xl:'17px'};
 const ACCENTS = {saffron:'#E8891C', teal:'#1F8A84', indigo:'#5B5BD6', rose:'#D14B72', green:'#3F8F5B'};
 function uiPrefs(){ return Object.assign({}, UI_DEF, S.settings.ui||{}); }
@@ -603,10 +611,12 @@ function openInstall(){
   const step = (n, html) => `<div class="row" style="align-items:flex-start;margin:.55rem 0"><div style="flex-shrink:0;width:1.6rem;height:1.6rem;border-radius:50%;background:var(--ink);color:var(--on-ink);display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700">${n}</div><div class="grow" style="padding-top:.15rem">${html}</div></div>`;
   let body;
   if(isInstalled()) body = `<p>✅ You're already using the installed app. Nothing more to do.</p>`;
-  else if(p==='ios') body = (iosBrowser()!=='Safari' ? `<p class="sub" style="margin-bottom:.4rem">You're in ${iosBrowser()}. These steps work best in <b>Safari</b> — open ${esc(location.host)} there first.</p>` : '') +
-      step(1, `Tap the <b>Share</b> button ${SHARE_ICON} at the bottom of Safari (on iPad, top right).`) +
+  else if(p==='ios') body = (!['Safari','Chrome'].includes(iosBrowser()) ? `<p class="sub" style="margin-bottom:.4rem">You're in ${iosBrowser()}. These steps work best in <b>Safari</b> or <b>Chrome</b> — open ${esc(location.host)} there first.</p>` : '') +
+      step(1, iosBrowser()==='Chrome'
+        ? `Tap the <b>Share</b> button ${SHARE_ICON} in the address bar at the top right.`
+        : `Tap the <b>Share</b> button ${SHARE_ICON} at the bottom of Safari (on iPad, top right).`) +
       step(2, `Scroll down and tap <b>Add to Home Screen</b>.`) +
-      step(3, `Tap <b>Add</b>. Then open <b>AaHaHome</b> from your home screen — not from Safari.`) +
+      step(3, `Tap <b>Add</b>. Then open <b>AaHaHome</b> from your home screen — not from the browser.`) +
       `<p class="sub" style="margin-top:.6rem">Tip: after installing, sign in inside the app once. Your data syncs from your account.</p>`;
   else if(p==='android') body = (installPrompt ? `<button class="btn accent" style="width:100%;min-height:2.8rem;margin:.3rem 0 .6rem" onclick="doInstall()">Install HomeBase</button><p class="sub">Or do it manually:</p>` : '') +
       step(1, `Open this page in <b>Chrome</b>.`) +
@@ -764,7 +774,7 @@ function openGuide(){
     ${sec('🗓️ Upcoming', `One timeline of payments and to-do reminders (car service, PUC, documents). Each item can remind you days before.`)}
     ${!FEATURES.household ? '' : sec('🧺 Household', `Grocery list, house help (leaves and salary) and important dates like birthdays.`)}
     ${sec('👫 Account & sharing', `Create a free account to back up your home and use it on any device — just email and password. To share, open Settings → <b>Account &amp; sync</b> and send your partner the 6-letter invite code; they choose <b>Join with code</b>. Prefer to stay offline? Use it without an account — data then lives only on that device.`)}
-    ${sec('📱 Install as an app', `<b>iPhone:</b> Safari → Share → Add to Home Screen — do this <b>before</b> you start, since the installed app keeps its own data.<br><b>Android:</b> Chrome → ⋮ → Install app.<br>Settings → <b>Install as an app</b> shows the steps for your phone.`)}
+    ${sec('📱 Install as an app', `<b>iPhone:</b> Safari or Chrome → Share → Add to Home Screen — do this <b>before</b> you start, since the installed app keeps its own data.<br><b>Android:</b> Chrome → ⋮ → Install app.<br>Settings → <b>Install as an app</b> shows the steps for your phone.`)}
     ${sec('🔔 Alerts & backups', `Settings → <b>Add all to phone calendar</b> for real phone alerts. Without an account, use <b>Export backup</b> now and then.`)}
     ${sec('🎨 Look & feel', `Settings → <b>Display &amp; theme</b> for text size, density, dark mode and accent colour.`)}
     <div class="formbtns"><button class="btn primary" onclick="closeModal()">Got it</button></div>`);
@@ -1251,45 +1261,67 @@ function fab(){
 }
 
 /* ---------- settings ---------- */
-function openSettings(draftName){
+function mrow(icon, title, sub, onclick, cls){
+  return `<button class="mrow ${cls||''}" onclick="${onclick}"><span class="mi">${icon}</span><span class="mt">${title}</span><span class="ms">${sub||''}</span><span class="mc">›</span></button>`;
+}
+function openSettings(){
+  const names = hasPartner() ? `${esc(who(me()))} &amp; ${esc(who(other()))}` : esc(S.people?.[me()] || '');
+  const themeName = {dark:'Dark', light:'Light', auto:'Auto'}[uiPrefs().theme] || '';
   showModal(`
     <h2>Settings</h2>
-    <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center" onclick="openAdmin()"><span>🎨 Display &amp; theme</span><span class="sub">Text size, dark mode, colour ›</span></button>
-    <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="openCloud()"><span>☁️ ${cloud.hid?'Account &amp; sync':'Create account / Sign in'}</span><span class="sub">${cloudSummary()} ›</span></button>
-    ${cloud.hid && sbUser ? `<button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="cloudLogout()"><span>🚪 Log out</span><span class="sub">${esc(sbUser.email)}</span></button>` : ''}
-    ${isInstalled() ? '' : `<button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="openInstall()"><span>📱 Install as an app</span><span class="sub">›</span></button>`}
-    <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="openGuide()"><span>📖 How to use HomeBase</span><span class="sub">›</span></button>
-    <h3>People</h3>
+    <div class="mgroup">
+      ${cloud.hid && sbUser ? mrow('☁️','Account &amp; sync', esc(sbUser.email), 'openCloud()')
+                            : mrow('☁️','Create account / Sign in', 'Back up &amp; share', "openAuth('signup')")}
+      ${mrow('👥','People', names, 'openPeople()')}
+    </div>
+    <div class="mgroup">
+      ${mrow('🎨','Display &amp; theme', themeName, 'openAdmin()')}
+      ${mrow('💾','Data &amp; backup', cloud.hid ? 'Synced' : 'This phone only', 'openData()')}
+      ${isInstalled() ? '' : mrow('📱','Install as an app', '', 'openInstall()')}
+      ${mrow('📖','How to use HomeBase', '', 'openGuide()')}
+    </div>
+    ${cloud.hid && sbUser ? `<div class="mgroup">${mrow('🚪','Log out', '', 'cloudLogout()', 'danger')}</div>` : ''}
+    <p class="sub" style="text-align:center;margin-top:.9rem">HomeBase · beta</p>
+    <div class="formbtns"><button class="btn primary" onclick="closeModal()">Done</button></div>`);
+}
+function openPeople(draftName){
+  showModal(`
+    <h2>👥 People</h2>
     <form onsubmit="event.preventDefault();saveNames(this)">
       <label>Your name</label><input name="myname" value="${esc(draftName ?? S.people?.[me()] ?? '')}" autocomplete="off">
       ${hasPartner() || ui.addingPartner ? `
         <label>Partner's name</label><input name="partnername" value="${esc(S.people?.[other()]||'')}" placeholder="e.g. Wilma" autocomplete="off" ${ui.addingPartner?'autofocus':''}>
-        ${hasPartner()?`<button type="button" class="btn danger" style="margin-top:.4rem" onclick="removePartner()">Remove partner</button>`:''}`
-      : `<button type="button" class="btn" style="margin-top:.6rem" onclick="ui.addingPartner=true;openSettings(this.form.elements.myname.value)">+ Add a partner</button>
+        ${hasPartner()?`<button type="button" class="btn danger" style="margin-top:.5rem" onclick="removePartner()">Remove partner</button>`:''}`
+      : `<button type="button" class="btn" style="margin-top:.7rem" onclick="ui.addingPartner=true;openPeople(this.form.elements.myname.value)">+ Add a partner</button>
          <p class="sub" style="margin-top:.3rem">Optional — for assigning tasks to each other.</p>`}
-      <div class="formbtns"><button type="button" class="btn" onclick="ui.addingPartner=false;closeModal()">Cancel</button><button class="btn primary">Save</button></div>
-    </form>
-    <h3>Your data</h3>
-    <p class="sub">${cloud.hid ? 'Synced with your household. A backup export is still a good idea now and then.' : 'Stored on this phone only. Export a backup now and then.'}</p>
-    <div class="actions">
-      <button class="btn" onclick="calendarAll()">📅 Add all to phone calendar</button>
-      <button class="btn" onclick="exportData()">⬇ Export backup</button>
-      <button class="btn" onclick="document.getElementById('imp').click()">⬆ Import backup</button>
-      <input type="file" id="imp" accept="application/json" style="display:none" onchange="importData(this)">
-      ${S.sample?`<button class="btn" onclick="clearSample()">Clear sample data</button>`:''}
-      <button class="btn danger" onclick="if(confirm(cloud.hid?'Erase everything — on this phone AND for everyone in your household?':'Erase everything?')){const st=S.settings,pp=S.people;S=blank();S.settings=st;S.people=pp;S.varselImported=S.v2=S.v3=true;save();closeModal();render()}">Erase all</button>
-    </div>`);
+      <div class="formbtns"><button type="button" class="btn" onclick="ui.addingPartner=false;openSettings()">‹ Settings</button><button class="btn primary">Save</button></div>
+    </form>`);
+}
+function openData(){
+  showModal(`
+    <h2>💾 Data &amp; backup</h2>
+    <p class="sub" style="margin-bottom:.6rem">${cloud.hid ? 'Your home is synced to your account. A backup file is still handy now and then.' : 'Stored on this phone only. Export a backup now and then — or create an account to back it up automatically.'}</p>
+    <div class="mgroup">
+      ${mrow('📅','Add all to phone calendar', 'Real phone alerts', 'calendarAll()')}
+      ${mrow('⬇️','Export backup', 'Save a file', 'exportData()')}
+      ${mrow('⬆️','Import backup', 'Restore a file', "document.getElementById('imp').click()")}
+    </div>
+    <input type="file" id="imp" accept="application/json" style="display:none" onchange="importData(this)">
+    <div class="mgroup">
+      ${mrow('🗑️','Erase all', cloud.hid ? 'For everyone in your home' : 'This phone', "if(confirm(cloud.hid?'Erase everything — on this phone AND for everyone in your household?':'Erase everything?')){const st=S.settings,pp=S.people;S=blank();S.settings=st;S.people=pp;S.varselImported=S.v2=S.v3=true;save();closeModal();render()}", 'danger')}
+    </div>
+    <div class="formbtns"><button class="btn" onclick="openSettings()">‹ Settings</button><button class="btn primary" onclick="closeModal()">Done</button></div>`);
 }
 function saveNames(f){
   const mine = f.elements.myname.value.trim() || 'Me';
   const pf = f.elements.partnername; const theirs = pf ? (pf.value.trim() || 'Partner') : (S.people?.[other()]||'');
-  S.people = {...S.people, [me()]:mine, [other()]:theirs}; ui.addingPartner = false; save(); closeModal(); render(); toast('Saved');
+  S.people = {...S.people, [me()]:mine, [other()]:theirs}; ui.addingPartner = false; save(); render(); openSettings(); toast('Saved');
 }
 function removePartner(){
   if(!confirm(`Remove ${who(other())}? Tasks assigned to them (or to both) move to you.`)) return;
   S.tasks.forEach(t=>{ if(t.assignee!==me()) t.assignee = me(); });
   S.people = {...S.people, [other()]:''}; if(ui.taskFilter===other()) ui.taskFilter='open';
-  save(); openSettings(); render(); toast('Partner removed');
+  save(); openPeople(); render(); toast('Partner removed');
 }
 function clearSample(){ const st=S.settings, pp=S.people; S=blank(); S.settings=st; S.people=pp; S.varselImported=S.v2=S.v3=true; save(); closeModal(); render(); toast('Fresh start ✨'); }
 function exportData(){
