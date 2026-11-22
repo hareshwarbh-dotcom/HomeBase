@@ -566,8 +566,59 @@ async function autoCreateHousehold(fallbackName){
   S.settings.whoami = 'a'; S.roles = {[sbUser.id]:'a'};
   saveCloud(); save(); await cloudStart();
 }
+
+/* ---------- install as an app ---------- */
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; if(S && S.onboarded !== undefined) render(); });
+window.addEventListener('appinstalled', () => { installPrompt = null; toast('Installed! Open HomeBase from your home screen'); render(); });
+function isInstalled(){ return (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true; }
+function devicePlatform(){
+  const ua = navigator.userAgent;
+  if(/iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return 'ios';
+  if(/Android/.test(ua)) return 'android';
+  return 'desktop';
+}
+function iosBrowser(){ const ua = navigator.userAgent; return /CriOS/.test(ua) ? 'Chrome' : /FxiOS/.test(ua) ? 'Firefox' : /EdgiOS/.test(ua) ? 'Edge' : 'Safari'; }
+const SHARE_ICON = '<svg width="15" height="18" viewBox="0 0 15 18" style="vertical-align:-3px" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7.5 11V1.5M4.2 4.6 7.5 1.3l3.3 3.3"/><path d="M5 7H2.5A1 1 0 0 0 1.5 8v8a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1H10"/></svg>';
+function installBanner(where){
+  if(isInstalled() || devicePlatform()==='desktop') return '';
+  const until = S.settings.installSnooze; if(where!=='welcome' && until && today() < until) return '';
+  const first = where==='welcome' && devicePlatform()==='ios';
+  return `<div class="card" style="background:var(--blue-soft);border-color:color-mix(in srgb,var(--blue) 30%,var(--line));margin-top:.6rem">
+    <div class="row" style="align-items:flex-start"><div class="src" style="font-size:1.3rem">📱</div>
+      <div class="grow"><div class="title">${first ? 'Install HomeBase first' : 'Get HomeBase on your home screen'}</div>
+        <div class="meta" style="display:block">${first ? 'On iPhone, install before you start — the app keeps its own data, separate from the browser.' : 'Opens full-screen like a normal app, works offline, one tap away.'}</div>
+        <div class="actions">${installPrompt ? `<button class="btn accent" onclick="doInstall()">Install</button>` : `<button class="btn accent" onclick="openInstall()">Show me how</button>`}
+          ${where==='welcome' ? '' : `<button class="btn" onclick="S.settings.installSnooze=addDays(today(),14);save();render()">Later</button>`}</div>
+      </div></div></div>`;
+}
+async function doInstall(){
+  if(!installPrompt) return openInstall();
+  installPrompt.prompt();
+  try{ await installPrompt.userChoice; }catch(e){}
+  installPrompt = null; render();
+}
+function openInstall(){
+  const p = devicePlatform();
+  const step = (n, html) => `<div class="row" style="align-items:flex-start;margin:.55rem 0"><div style="flex-shrink:0;width:1.6rem;height:1.6rem;border-radius:50%;background:var(--ink);color:var(--on-ink);display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700">${n}</div><div class="grow" style="padding-top:.15rem">${html}</div></div>`;
+  let body;
+  if(isInstalled()) body = `<p>✅ You're already using the installed app. Nothing more to do.</p>`;
+  else if(p==='ios') body = (iosBrowser()!=='Safari' ? `<p class="sub" style="margin-bottom:.4rem">You're in ${iosBrowser()}. These steps work best in <b>Safari</b> — open ${esc(location.host)} there first.</p>` : '') +
+      step(1, `Tap the <b>Share</b> button ${SHARE_ICON} at the bottom of Safari (on iPad, top right).`) +
+      step(2, `Scroll down and tap <b>Add to Home Screen</b>.`) +
+      step(3, `Tap <b>Add</b>. Then open <b>AaHaHome</b> from your home screen — not from Safari.`) +
+      `<p class="sub" style="margin-top:.6rem">Tip: after installing, sign in inside the app once. Your data syncs from your account.</p>`;
+  else if(p==='android') body = (installPrompt ? `<button class="btn accent" style="width:100%;min-height:2.8rem;margin:.3rem 0 .6rem" onclick="doInstall()">Install HomeBase</button><p class="sub">Or do it manually:</p>` : '') +
+      step(1, `Open this page in <b>Chrome</b>.`) +
+      step(2, `Tap the <b>⋮</b> menu at the top right.`) +
+      step(3, `Tap <b>Install app</b> (or <b>Add to Home screen</b>), then <b>Install</b>.`);
+  else body = (installPrompt ? `<button class="btn accent" style="width:100%;min-height:2.8rem;margin:.3rem 0 .6rem" onclick="doInstall()">Install on this computer</button>` : '') +
+      `<p class="sub">HomeBase is made for phones. Open <b>${esc(location.host)}</b> on your phone to install it there. On a computer, Chrome and Edge show an install icon in the address bar.</p>`;
+  showModal(`<h2>📱 Install as an app</h2>${body}<div class="formbtns"><button class="btn primary" onclick="closeModal()">Done</button></div>`);
+}
+
 function inviteLink(){
-  return 'https://wa.me/?text=' + encodeURIComponent(`Let's run our home together on HomeBase 🏠\n\n1. Open ${location.origin}\n2. Tap "Join with code"\n3. Enter code: ${cloud.code||''}`);
+  return 'https://wa.me/?text=' + encodeURIComponent(`Let's run our home together on HomeBase 🏠\n\n1. Open ${location.origin}\n2. Add it to your home screen (iPhone: Safari → Share → Add to Home Screen)\n3. Open it, tap "Join with code" and enter: ${cloud.code||''}`);
 }
 function openInvite(first){
   showModal(`<h2>${first ? "🎉 You're all set!" : 'Invite your partner'}</h2>
@@ -625,7 +676,7 @@ function migrateV4(){
   S.onboarded = any; save();
 }
 function viewWelcome(){
-  return `
+  return `${installBanner('welcome')}
   <div style="padding:.2rem 0 .8rem">
     <div class="mtitle big" style="font-size:1.9rem;line-height:1.15;margin-bottom:.4rem">Welcome to<br>Home<span style="color:var(--saffron)">Base</span></div>
     <p class="sub" style="font-size:.95rem">One calm place for your home — chores, bills and reminders. Alone or with your partner.</p>
@@ -713,7 +764,7 @@ function openGuide(){
     ${sec('🗓️ Upcoming', `One timeline of payments and to-do reminders (car service, PUC, documents). Each item can remind you days before.`)}
     ${!FEATURES.household ? '' : sec('🧺 Household', `Grocery list, house help (leaves and salary) and important dates like birthdays.`)}
     ${sec('👫 Account & sharing', `Create a free account to back up your home and use it on any device — just email and password. To share, open Settings → <b>Account &amp; sync</b> and send your partner the 6-letter invite code; they choose <b>Join with code</b>. Prefer to stay offline? Use it without an account — data then lives only on that device.`)}
-    ${sec('📱 Install as an app', `<b>iPhone:</b> open in Safari → Share → Add to Home Screen.<br><b>Android:</b> Chrome → ⋮ → Install app.`)}
+    ${sec('📱 Install as an app', `<b>iPhone:</b> Safari → Share → Add to Home Screen — do this <b>before</b> you start, since the installed app keeps its own data.<br><b>Android:</b> Chrome → ⋮ → Install app.<br>Settings → <b>Install as an app</b> shows the steps for your phone.`)}
     ${sec('🔔 Alerts & backups', `Settings → <b>Add all to phone calendar</b> for real phone alerts. Without an account, use <b>Export backup</b> now and then.`)}
     ${sec('🎨 Look & feel', `Settings → <b>Display &amp; theme</b> for text size, density, dark mode and accent colour.`)}
     <div class="formbtns"><button class="btn primary" onclick="closeModal()">Got it</button></div>`);
@@ -794,6 +845,7 @@ function viewHome(){
   return `
     <p class="sub">${greet}, ${esc(who(me()))} · ${new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}</p>
     ${syncBanner()}
+    ${installBanner('home')}
     <h3>At a glance</h3>
     <div class="stats">
       <div class="stat hl" onclick="go('tasks',me())"><div class="n">${hasPartner()?mine:open.length}</div><div class="l">${hasPartner()?'Tasks on you · '+open.length+' open total':'Open tasks'}</div></div>
@@ -1205,6 +1257,7 @@ function openSettings(draftName){
     <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center" onclick="openAdmin()"><span>🎨 Display &amp; theme</span><span class="sub">Text size, dark mode, colour ›</span></button>
     <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="openCloud()"><span>☁️ ${cloud.hid?'Account &amp; sync':'Create account / Sign in'}</span><span class="sub">${cloudSummary()} ›</span></button>
     ${cloud.hid && sbUser ? `<button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="cloudLogout()"><span>🚪 Log out</span><span class="sub">${esc(sbUser.email)}</span></button>` : ''}
+    ${isInstalled() ? '' : `<button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="openInstall()"><span>📱 Install as an app</span><span class="sub">›</span></button>`}
     <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="openGuide()"><span>📖 How to use HomeBase</span><span class="sub">›</span></button>
     <h3>People</h3>
     <form onsubmit="event.preventDefault();saveNames(this)">
