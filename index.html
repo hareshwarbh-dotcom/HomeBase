@@ -275,6 +275,7 @@ function snapshot(){
   COLS.forEach(c=>(S[c]||[]).forEach(x=>{ m[c+'|'+x.id] = x; }));
   Object.entries(S.paid||{}).forEach(([mk,arr])=>(arr||[]).forEach(k=>{ m['paid|'+mk+'|'+k] = true; }));
   m['meta|people'] = S.people;
+  if(S.roles) m['meta|roles'] = S.roles;
   return m;
 }
 function setSyncState(st){ syncState = st; const d = document.getElementById('syncdot'); if(d){ d.className = 'syncdot '+st; } const el=document.getElementById('cloudstatus'); if(el) el.innerHTML = cloudStatusText(); }
@@ -309,6 +310,11 @@ async function cloudBoot(){
 async function cloudStart(){
   setSyncState('syncing');
   await cloudPull(!cloud.since);
+  if(sbUser){
+    const role = S.roles?.[sbUser.id];
+    if(role){ if(S.settings.whoami!==role){ S.settings.whoami = role; applying=true; try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} applying=false; render(); } }
+    else { S.roles = {...(S.roles||{}), [sbUser.id]: me()}; save(); }
+  }
   await cloudPush();
   cloudSubscribe();
   clearInterval(pollTimer); pollTimer = setInterval(()=>{ if(document.visibilityState==='visible') cloudPull(false); }, 30000);
@@ -327,6 +333,7 @@ function rowApply(r){
     const arr = S.paid[mk] = S.paid[mk]||[]; const i = arr.indexOf(k);
     if(r.deleted){ if(i>=0) arr.splice(i,1); } else if(i<0) arr.push(k);
   } else if(r.col==='meta' && r.id==='people' && !r.deleted && r.data){ S.people = r.data; }
+  else if(r.col==='meta' && r.id==='roles' && !r.deleted && r.data){ S.roles = r.data; }
   if(r.deleted) delete synced[key]; else synced[key] = newHash;
   return true;
 }
@@ -441,7 +448,7 @@ function openCloud(msg){
     <div class="actions">
       <button class="btn" onclick="cloudPull(true).then(cloudPush).then(()=>openCloud())">🔄 Sync now</button>
       ${hasPartner()?'':'<!--'}<button class="btn" onclick="cloudSwapMe()">I'm ${esc(who(other()))}, not ${esc(who(me()))}</button>${hasPartner()?'':'-->'}
-      <button class="btn danger" onclick="if(confirm('Stop syncing on this phone? Your data stays here.')) cloudSignOut(true)">Disconnect</button>
+      <button class="btn danger" onclick="cloudLogout()">Log out</button>
     </div>
     <div class="formbtns">${back}<button class="btn primary" onclick="closeModal()">Done</button></div>`);
 }
@@ -460,16 +467,30 @@ async function cloudAuth(f, mode){
     if(error) throw error;
     sbUser = data.user || data.session?.user;
     if(!data.session) throw new Error('Account created, but email confirmation is on. Turn off "Confirm email" in Supabase, then sign in.');
+    if(!cloud.hid) await cloudFindHousehold();
     if(cloud.hid) await cloudStart();
     openCloud();
   }catch(e){ openCloud(e.message||'Sign-in failed'); }
+}
+function hasLocalData(){ return COLS.some(c=>(S[c]||[]).length); }
+async function cloudFindHousehold(){
+  const { data, error } = await sb.from('members').select('household_id').eq('user_id', sbUser.id).limit(1);
+  if(error || !data || !data.length) return false;
+  const hid = data[0].household_id;
+  if(hasLocalData() && !confirm("You already have a household in the cloud. Replace what's on this device with your household's data?")) return false;
+  const h = await sb.from('households').select('*').eq('id', hid).single();
+  const st = S.settings; S = blank(); S.settings = st; S.varselImported = S.v2 = S.v3 = true; S.onboarded = true;
+  cloud.hid = hid; cloud.code = h.data?.invite_code || null; cloud.since = null; synced = {};
+  applying = true; try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} applying = false; saveCloud();
+  toast('Welcome back — your household is loading');
+  return true;
 }
 async function cloudCreate(){
   try{
     const { data, error } = await sb.rpc('create_household', {p_name:'Home'});
     if(error) throw error;
     const h = Array.isArray(data) ? data[0] : data;
-    cloud.hid = h.id; cloud.code = h.invite_code; cloud.since = null; synced = {}; S.settings.whoami = S.settings.whoami || 'a';
+    cloud.hid = h.id; cloud.code = h.invite_code; cloud.since = null; synced = {}; S.settings.whoami = 'a'; S.roles = {[sbUser.id]:'a'};
     saveCloud(); save(); await cloudStart(); openCloud(); toast('Household created — share the code');
   }catch(e){ openCloud(e.message||'Could not create household'); }
 }
@@ -482,10 +503,21 @@ async function cloudJoin(code){
     const st = S.settings; S = blank(); S.settings = {...st, whoami:'b'}; S.varselImported = S.v2 = S.v3 = true; S.onboarded = true;
     cloud.hid = data; cloud.code = code; cloud.since = null; synced = {};
     applying = true; try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} applying = false; saveCloud();
-    await cloudStart(); if(!S.people?.[me()]){ S.people={...S.people,[me()]:'Partner'}; save(); } render(); openCloud(); toast('Joined! Set your name in Settings 🎉');
+    S.roles = {[sbUser.id]:'b'}; await cloudStart(); S.roles = {...(S.roles||{}), [sbUser.id]:'b'}; S.settings.whoami='b'; save(); if(!S.people?.[me()]){ S.people={...S.people,[me()]:'Partner'}; save(); } render(); openCloud(); toast('Joined! Set your name in Settings 🎉');
   }catch(e){ openCloud(e.message||'Could not join'); }
 }
 function cloudSwapMe(){ S.settings.whoami = other(); applying = true; try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} applying = false; render(); openCloud(); }
+async function cloudLogout(){
+  if(!confirm('Log out of '+(sbUser?.email||'your account')+'? Your data stays safe in the cloud, and this device will be cleared.')) return;
+  try{ await cloudPush(); }catch(e){}
+  if(pendingChanges().length && !confirm("Some recent changes haven't synced yet (you may be offline) and will be lost. Log out anyway?")) return;
+  try{ if(rtChannel) sb.removeChannel(rtChannel); await sb?.auth.signOut(); }catch(e){}
+  clearInterval(pollTimer); rtChannel = null; sbUser = null;
+  cloud.hid = null; cloud.code = null; cloud.since = null; synced = {}; saveCloud();
+  const ui0 = S.settings.ui; S = blank(); S.settings = {whoami:'a', ui:ui0}; S.varselImported = S.v2 = S.v3 = true; S.onboarded = false;
+  applying = true; try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} applying = false;
+  setSyncState('off'); closeModal(); ui.view='home'; render(); toast('Logged out');
+}
 async function cloudSignOut(disconnect){
   try{ if(rtChannel) sb.removeChannel(rtChannel); await sb?.auth.signOut(); }catch(e){}
   clearInterval(pollTimer); rtChannel = null; sbUser = null;
@@ -521,7 +553,7 @@ function viewWelcome(){
     <button class="btn accent" style="width:100%;margin-top:1rem;min-height:2.8rem">Get started</button>
   </form>
   <div class="actions" style="justify-content:center">
-    <button class="btn" onclick="S.onboarded=true;save();render();openCloud()">I have an invite code</button>
+    <button class="btn" onclick="S.onboarded=true;save();render();openCloud()">Sign in / Join with a code</button>
     <button class="btn" onclick="openGuide()">📖 How it works</button>
   </div>`;
 }
@@ -591,6 +623,18 @@ function feedRow(x, withActions){
       ${act}
     </div>`;
 }
+function syncBanner(){
+  if(cloud.hid) return '';
+  const until = S.settings.nudgeUntil; if(until && today() < until) return '';
+  return `<div class="card" style="background:var(--accent-soft);border-color:color-mix(in srgb,var(--saffron) 35%,var(--line));margin-top:.6rem">
+    <div class="row" style="align-items:flex-start">
+      <div class="src" style="font-size:1.3rem">☁️</div>
+      <div class="grow"><div class="title">Your data is only on this phone</div>
+        <div class="meta" style="display:block">Without Cloud sync, nothing is backed up — if you clear your browser or change phones, it's gone. Sign up to keep it safe — and share it with someone if you like.</div>
+        <div class="actions"><button class="btn accent" onclick="openCloud()">Set up Cloud sync</button><button class="btn" onclick="snoozeNudge()">Remind me later</button></div>
+      </div></div></div>`;
+}
+function snoozeNudge(){ S.settings.nudgeUntil = addDays(today(), 7); save(); render(); toast("OK — we'll remind you in a week"); }
 function viewHome(){
   const mk = monthKey();
   const open = S.tasks.filter(t=>!t.done);
@@ -605,6 +649,7 @@ function viewHome(){
   const greet = hr<12?'Good morning':hr<17?'Good afternoon':'Good evening';
   return `
     <p class="sub">${greet}, ${esc(who(me()))} · ${new Date().toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}</p>
+    ${syncBanner()}
     <h3>At a glance</h3>
     <div class="stats">
       <div class="stat hl" onclick="go('tasks',me())"><div class="n">${hasPartner()?mine:open.length}</div><div class="l">${hasPartner()?'Tasks on you · '+open.length+' open total':'Open tasks'}</div></div>
@@ -977,7 +1022,9 @@ function saveForm(kind, id, form){
   if(kind==='obligation'){ data.dueDay = Math.min(31, Math.max(1, Math.round(data.dueDay)||1)); if(!data.startMonth) data.startMonth=ui.oblMonth; if(data.freq==='once'){ data.endMonth=''; } if(data.endMonth && data.endMonth<data.startMonth){ toast('End month is before start month'); return; } }
   if(id){ Object.assign(S[F.col].find(x=>x.id===id), data); }
   else { S[F.col].push({...F.def(), ...data, id:uid()}); }
-  save(); closeModal(); render(); toast('Saved');
+  save(); closeModal(); render();
+  if(!cloud.hid && !S.settings.savedNote){ S.settings.savedNote = true; save(); toast('Saved on this phone only — turn on Cloud sync in ⚙︎ Settings to back it up'); }
+  else toast('Saved');
 }
 function del(col, id, quiet){
   if(!quiet && !confirm('Delete this?')) return;
@@ -1011,6 +1058,7 @@ function openSettings(draftName){
     <h2>Settings</h2>
     <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center" onclick="openAdmin()"><span>🎨 Display &amp; theme</span><span class="sub">Text size, dark mode, colour ›</span></button>
     <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="openCloud()"><span>☁️ Cloud sync</span><span class="sub">${cloudSummary()} ›</span></button>
+    ${cloud.hid && sbUser ? `<button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="cloudLogout()"><span>🚪 Log out</span><span class="sub">${esc(sbUser.email)}</span></button>` : ''}
     <button class="btn" style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-top:.5rem" onclick="openGuide()"><span>📖 How to use HomeBase</span><span class="sub">›</span></button>
     <h3>People</h3>
     <form onsubmit="event.preventDefault();saveNames(this)">
