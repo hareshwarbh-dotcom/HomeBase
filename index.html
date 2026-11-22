@@ -131,7 +131,7 @@ html.comfy .stat{padding:.8rem 1rem}
 <script>
 /* ---------- storage ---------- */
 const KEY = 'homebase.v1';
-const blank = () => ({settings:{me:'Hari',partner:'Wife'},tasks:[],obligations:[],paid:{},expenses:[],subs:[],reminders:[],groceries:[],help:[],dates:[]});
+const blank = () => ({settings:{me:'Haresh',partner:'Wife'},tasks:[],obligations:[],paid:{},expenses:[],subs:[],reminders:[],groceries:[],help:[],dates:[]});
 let S;
 function load(){
   try{ const raw = localStorage.getItem(KEY); if(raw) return Object.assign(blank(), JSON.parse(raw)); }catch(e){}
