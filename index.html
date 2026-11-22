@@ -397,9 +397,60 @@ function cloudSchedulePush(){
   if(applying || !sb || !cloud.hid) return;
   setSyncState('pending'); clearTimeout(pushTimer); pushTimer = setTimeout(cloudPush, 700);
 }
+
+/* ---------- photos: Supabase Storage + on-device cache ---------- */
+const PHOTO_BUCKET = 'photos', PHOTO_CACHE = 'hb-photos';
+const photoURLs = {};                 // path -> object URL (this session)
+let photoRetryAt = 0, photoUploading = false;
+function imgAttrs(t){ return t.photo ? `src="${t.photo}"` : t.photoPath ? `data-photo="${esc(t.photoPath)}" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" style="background:var(--soft)"` : ''; }
+function hasPhoto(t){ return !!(t.photo || t.photoPath); }
+function dataURLtoBlob(d){ const [h,b] = d.split(','); const bin = atob(b); const a = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) a[i]=bin.charCodeAt(i); return new Blob([a], {type:(h.match(/data:(.*?);/)||[])[1]||'image/jpeg'}); }
+async function photoCache(){ try{ return ('caches' in window) ? await caches.open(PHOTO_CACHE) : null; }catch(e){ return null; } }
+async function getPhotoURL(path){
+  if(photoURLs[path]) return photoURLs[path];
+  const key = '/hb-photo/' + path, c = await photoCache();
+  try{ const hit = c && await c.match(key); if(hit){ return photoURLs[path] = URL.createObjectURL(await hit.blob()); } }catch(e){}
+  if(!sb) await cloudClient().catch(()=>{});
+  if(!sb) return null;
+  const { data, error } = await sb.storage.from(PHOTO_BUCKET).createSignedUrl(path, 3600);
+  if(error || !data?.signedUrl) return null;
+  const res = await fetch(data.signedUrl); if(!res.ok) return null;
+  const blob = await res.blob();
+  try{ c && await c.put(key, new Response(blob, {headers:{'Content-Type':blob.type||'image/jpeg'}})); }catch(e){}
+  return photoURLs[path] = URL.createObjectURL(blob);
+}
+function hydratePhotos(){
+  document.querySelectorAll('img[data-photo]:not([data-loading])').forEach(img=>{
+    img.dataset.loading = '1';
+    getPhotoURL(img.dataset.photo).then(u=>{ if(u){ img.src = u; img.style.background=''; } }).catch(()=>{});
+  });
+}
+async function uploadPendingPhotos(){
+  if(!sb || !cloud.hid || photoUploading || Date.now() < photoRetryAt || !navigator.onLine) return;
+  const todo = S.tasks.filter(t=>t.photo && t.photo.startsWith('data:'));
+  if(!todo.length) return;
+  photoUploading = true;
+  try{
+    for(const t of todo){
+      const path = `${cloud.hid}/${t.id}-${Date.now().toString(36)}.jpg`;
+      const blob = dataURLtoBlob(t.photo);
+      const { error } = await sb.storage.from(PHOTO_BUCKET).upload(path, blob, {contentType:'image/jpeg', upsert:true});
+      if(error) throw error;
+      try{ const c = await photoCache(); c && await c.put('/hb-photo/'+path, new Response(blob, {headers:{'Content-Type':'image/jpeg'}})); }catch(e){}
+      photoURLs[path] = URL.createObjectURL(blob);
+      const cur = S.tasks.find(x=>x.id===t.id);
+      if(cur && cur.photo === t.photo){ cur.photoPath = path; delete cur.photo; }
+    }
+  }catch(e){ photoRetryAt = Date.now() + 5*60*1000; }   // storage not set up or offline: keep photos on device, retry later
+  finally{
+    photoUploading = false;
+    try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){}
+  }
+}
 let pushing = false;
 async function cloudPush(){
   if(!sb || !cloud.hid || pushing) return;
+  await uploadPendingPhotos();
   const ch = pendingChanges(); if(!ch.length){ setSyncState('ok'); return; }
   pushing = true; setSyncState('syncing');
   try{
@@ -685,6 +736,7 @@ function render(){
   if(welcome){ document.getElementById('ptitle').innerHTML = ''; document.getElementById('main').innerHTML = viewWelcome(); return; }
   const v = {home:viewHome, tasks:viewTasks, money:viewMoney, reminders:viewReminders, house:viewHouse}[ui.view];
   document.getElementById('main').innerHTML = demoBar() + v();
+  hydratePhotos();
 }
 
 /* ---------- HOME / dashboard ---------- */
@@ -772,7 +824,7 @@ function taskCard(t){
   return `
   <div class="card ${t.done?'done':''}">
     <div class="row" onclick="ui.expanded=${open?'null':`'${t.id}'`};render()" style="cursor:pointer">
-      ${t.photo ? `<img class="thumb" src="${t.photo}" alt="">` : ''}
+      ${hasPhoto(t) ? `<img class="thumb" ${imgAttrs(t)} alt="">` : ''}
       <div class="grow">
         <div class="title">${esc(t.title)}</div>
         <div class="meta">${hasPartner()?'👤 '+esc(who(t.assignee)):''} <span class="pill p-${t.priority}">${t.priority}</span> ${t.done?'<span class="pill ok">Done</span>':dueTag(t.due)}</div>
@@ -780,7 +832,7 @@ function taskCard(t){
       <button class="check ${t.done?'on':''}" onclick="event.stopPropagation();toggleTask('${t.id}')">✓</button>
     </div>
     ${open ? `
-      ${t.photo ? `<img class="full" src="${t.photo}" alt="">` : ''}
+      ${hasPhoto(t) ? `<img class="full" ${imgAttrs(t)} alt="">` : ''}
       ${t.notes ? `<p style="margin-top:.4rem">${esc(t.notes)}</p>` : ''}
       <p class="sub" style="margin-top:.3rem">${t.due?'Due '+fmtDate(t.due):'No due date'}${t.doneAt?' · Completed '+fmtDate(t.doneAt):''}</p>
       <div class="actions">
@@ -1077,11 +1129,11 @@ const FORMS = {
 let tempPhoto = null;
 function openForm(kind, id){
   const F = FORMS[kind]; const item = id ? S[F.col].find(x=>x.id===id) : F.def();
-  tempPhoto = item.photo || null;
+  tempPhoto = item.photo || (item.photoPath ? 'path:'+item.photoPath : null);
   const fields = F.fields().map(f=>{
     const v = item[f.k] ?? '';
     if(f.t==='photo') return `<label>${f.l}</label>
-      <div class="photobox" onclick="document.getElementById('ph').click()" id="phbox">${tempPhoto?`<img src="${tempPhoto}">`:'📷 Tap to take or choose a photo'}</div>
+      <div class="photobox" onclick="document.getElementById('ph').click()" id="phbox">${tempPhoto?(tempPhoto.startsWith('path:')?`<img data-photo="${esc(tempPhoto.slice(5))}" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">`:`<img src="${tempPhoto}">`):'📷 Tap to take or choose a photo'}</div>
       <input type="file" id="ph" accept="image/*" capture="environment" style="display:none" onchange="pickPhoto(this)">
       ${tempPhoto?`<button type="button" class="btn danger" style="margin-top:6px" onclick="tempPhoto=null;document.getElementById('phbox').innerHTML='📷 Tap to take or choose a photo';this.remove()">Remove photo</button>`:''}`;
     if(f.t==='select') return `<label>${f.l}</label><select name="${f.k}">${f.o.map(([val,lab])=>`<option value="${esc(val)}" ${String(v)===String(val)?'selected':''}>${esc(lab)}</option>`).join('')}</select>`;
@@ -1108,7 +1160,7 @@ async function pickPhoto(inp){
 function saveForm(kind, id, form){
   const F = FORMS[kind]; const data = {};
   F.fields().forEach(f=>{
-    if(f.t==='photo'){ data.photo = tempPhoto; return; }
+    if(f.t==='photo'){ if(!(tempPhoto && tempPhoto.startsWith('path:'))){ data.photo = tempPhoto; data.photoPath = null; } return; }
     let v = form.elements[f.k].value.trim();
     if(f.t==='number' && v!=='') v = Number(v);
     data[f.k] = v;
@@ -1126,7 +1178,7 @@ function del(col, id, quiet){
   S[col].splice(i,1); ui.expanded=null; save(); closeModal(); render();
   toast('Deleted', ()=>{ S[col].splice(i,0,item); save(); render(); });
 }
-function showModal(html){ document.getElementById('modal').innerHTML = `<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="sheet">${html}</div></div>`; }
+function showModal(html){ document.getElementById('modal').innerHTML = `<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="sheet">${html}</div></div>`; hydratePhotos(); }
 function closeModal(){ document.getElementById('modal').innerHTML=''; if(needRender){ needRender=false; render(); } }
 
 /* ---------- FAB ---------- */
@@ -1206,6 +1258,9 @@ migrateV3();
 migrateV4();
 render();
 cloudBoot();
+if('serviceWorker' in navigator && (location.protocol==='https:' || location.hostname==='localhost')){
+  window.addEventListener('load', ()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
 if(location.hash==='#admin') openAdmin();
 </script>
 </body>

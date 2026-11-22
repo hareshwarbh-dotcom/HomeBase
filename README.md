@@ -18,7 +18,8 @@ Live app: **https://aahahome.netlify.app** (installs on the phone as *AaHaHome*)
 
 Also included:
 - **Optional partner.** Works fine solo; add a partner anytime in Settings → People.
-- **Cloud sync** between phones and laptop (Supabase), live and offline-friendly.
+- **Free account + cloud sync** between phones and laptop (Supabase), live and offline-friendly.
+- **Explore first** with sample data, no sign-up needed.
 - **Phone calendar alerts.** Settings → *Add all to phone calendar* exports repeating events with reminders.
 - **Display & theme.** Text size, density, dark mode, accent colour.
 - **Backups.** Export or import a JSON file.
@@ -45,6 +46,7 @@ Also included:
 | `index.html` | The whole app |
 | `manifest.webmanifest` | App name, icon and full-screen settings for "install as app" |
 | `icon-192.png`, `icon-512.png` | App icons |
+| `sw.js` | Service worker: instant, offline-capable launch |
 | `README.md` | This file |
 
 ---
@@ -65,8 +67,8 @@ Your data is not touched by updates: it lives on each device and in Supabase, no
 2. **SQL Editor → New query**, paste the SQL below, then **Run**.
 3. **Authentication → Sign In / Providers → Email**: turn **off** "Confirm email".
 4. Copy the **Project URL** and the **publishable key** (never the secret / service_role key).
-5. In the app: Settings → ☁️ **Cloud sync**, paste both, create an account, then **Create household**.
-6. Share the 6-letter invite code. The other person pastes the same URL and key, creates their own account, then **Join**s.
+5. Put both values in `index.html` (constants `SB_URL` and `SB_KEY` near the top of the sync code). They're already set for this project.
+6. Users then just tap **Create free account** (email + password); a household is created automatically. Partners tap **Join with code** and enter the 6-letter invite code.
 
 <details>
 <summary>SQL to run in Supabase</summary>
@@ -129,6 +131,22 @@ begin new.updated_at = now(); return new; end $$;
 create trigger items_touch before update on items for each row execute function touch();
 
 alter publication supabase_realtime add table items;
+```
+
+Photos (Supabase Storage, private, per household):
+
+```sql
+insert into storage.buckets (id, name, public) values ('photos', 'photos', false)
+on conflict (id) do nothing;
+
+create policy "household can view photos" on storage.objects for select to authenticated
+  using (bucket_id = 'photos' and public.is_member(((storage.foldername(name))[1])::uuid));
+create policy "household can add photos" on storage.objects for insert to authenticated
+  with check (bucket_id = 'photos' and public.is_member(((storage.foldername(name))[1])::uuid));
+create policy "household can update photos" on storage.objects for update to authenticated
+  using (bucket_id = 'photos' and public.is_member(((storage.foldername(name))[1])::uuid));
+create policy "household can delete photos" on storage.objects for delete to authenticated
+  using (bucket_id = 'photos' and public.is_member(((storage.foldername(name))[1])::uuid));
 ```
 </details>
 
