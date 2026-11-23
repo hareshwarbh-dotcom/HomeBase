@@ -357,7 +357,12 @@ async function cloudStart(){
   if(sbUser){
     const role = S.roles?.[sbUser.id];
     if(role){ if(S.settings.whoami!==role){ S.settings.whoami = role; applying=true; try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e){} applying=false; render(); } }
-    else { S.roles = {...(S.roles||{}), [sbUser.id]: me()}; save(); }
+    else {
+      // New device for this account: take the person slot nobody else in the household holds
+      const taken = Object.entries(S.roles||{}).filter(([u])=>u!==sbUser.id).map(([,r])=>r);
+      const mine = taken.includes('a') && !taken.includes('b') ? 'b' : taken.includes('b') && !taken.includes('a') ? 'a' : me();
+      S.settings.whoami = mine; S.roles = {...(S.roles||{}), [sbUser.id]: mine}; save(); render();
+    }
   }
   await cloudPush();
   cloudSubscribe();
