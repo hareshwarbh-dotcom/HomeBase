@@ -150,4 +150,8 @@ create policy "household can delete photos" on storage.objects for delete to aut
 ```
 </details>
 
+## Notifications
+
+Morning summaries and "partner assigned you a task" alerts are sent by the Supabase Edge Function `notify` (source kept outside this repo), triggered hourly by `pg_cron`. Notifications contain item names only, never amounts. Users opt in under Settings → Preferences. On iPhone they work only in the installed (home-screen) app.
+
 **Security note:** the publishable key is meant to be public. Each household's data is protected by row-level security, so only its members can read or write it.
