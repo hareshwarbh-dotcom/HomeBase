@@ -114,6 +114,13 @@ textarea{min-height:4.5rem;resize:vertical}
 .swatch{width:2.2rem;height:2.2rem;border-radius:50%;border:3px solid var(--bg);box-shadow:0 0 0 1px var(--line);cursor:pointer}
 .swatch.on{box-shadow:0 0 0 2px var(--ink)}
 .adminrow{margin-bottom:.9rem}
+.switch{position:relative;display:inline-block;width:2.6rem;height:1.5rem;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0;position:absolute}
+.switch span{position:absolute;inset:0;background:var(--soft);border:1px solid var(--line);border-radius:99px;transition:.2s;cursor:pointer}
+.switch span::before{content:'';position:absolute;width:1.1rem;height:1.1rem;left:.15rem;top:50%;transform:translateY(-50%);background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.switch input:checked+span{background:var(--green);border-color:var(--green)}
+.switch input:checked+span::before{transform:translate(1.1rem,-50%)}
+.switch input:disabled+span{opacity:.45;cursor:not-allowed}
 .mgroup{background:var(--card);border:1px solid var(--line);border-radius:.8rem;overflow:hidden;margin-top:.7rem}
 .mrow{display:flex;align-items:center;gap:.7rem;width:100%;min-height:3rem;padding:.55rem .85rem;background:none;border:none;border-bottom:1px solid var(--line);font:inherit;color:var(--ink);text-align:left;cursor:pointer}
 .mgroup .mrow:last-child{border-bottom:none}
@@ -144,7 +151,8 @@ html.comfy .stat{padding:.8rem 1rem}
 <div class="app">
   <header>
     <h1 id="ptitle" onclick="titleTap()">Home<span>Base</span></h1>
-    <button class="iconbtn" onclick="openSettings()" title="Settings">⚙︎<span id="syncdot" class="syncdot off"></span></button>
+    <div style="display:flex;gap:.4rem"><button class="iconbtn" id="eyebtn" onclick="toggleReveal()" title="Show amounts" style="display:none">👁</button>
+    <button class="iconbtn" onclick="openSettings()" title="Settings">⚙︎<span id="syncdot" class="syncdot off"></span></button></div>
   </header>
   <main id="main"></main>
 </div>
@@ -185,7 +193,13 @@ function daysUntil(s){ return Math.round((parse(s) - parse(today()))/864e5); }
 function monthKey(s){ return (s||today()).slice(0,7); }
 function fmtDate(s){ return parse(s).toLocaleDateString('en-IN',{day:'numeric',month:'short'}); }
 function monthName(k){ const [y,m]=k.split('-').map(Number); return new Date(y,m-1,1).toLocaleDateString('en-IN',{month:'long',year:'numeric'}); }
-function inr(n){ return '₹' + Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:0}); }
+const PREF_DEF = { hideAmounts:false, leadPay:3, leadPayLong:15, leadTodo:7, notif:{ summary:false, hour:8, overdue:false, assigned:false } };
+function prefs(){ const p = S?.settings?.prefs || {}; return {...PREF_DEF, ...p, notif:{...PREF_DEF.notif, ...(p.notif||{})}}; }
+function setPref(k, v){ S.settings.prefs = {...prefs(), [k]:v}; save(); }
+function inrRaw(n){ return '₹' + Number(n||0).toLocaleString('en-IN',{maximumFractionDigits:0}); }
+function inr(n){ return prefs().hideAmounts && !ui.reveal ? '₹ ••••' : inrRaw(n); }
+let revealTimer;
+function toggleReveal(){ ui.reveal = !ui.reveal; clearTimeout(revealTimer); if(ui.reveal) revealTimer = setTimeout(()=>{ ui.reveal=false; render(); }, 30000); render(); }
 function esc(s){ return String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function dueTag(s){
   if(!s) return '';
@@ -347,6 +361,7 @@ async function cloudStart(){
   }
   await cloudPush();
   cloudSubscribe();
+  try{ if(pushSupported() && Notification.permission==='granted' && (prefs().notif.summary || prefs().notif.assigned)) syncPushRow(false).catch(()=>{}); }catch(e){}
   clearInterval(pollTimer); pollTimer = setInterval(()=>{ if(document.visibilityState==='visible') cloudPull(false); }, 30000);
 }
 function rowApply(r){
@@ -666,11 +681,12 @@ async function cloudFindHousehold(){
   await cloudStart();
   return true;
 }
-function cloudSwapMe(){ S.settings.whoami = other(); if(sbUser){ S.roles = {...(S.roles||{}), [sbUser.id]: me()}; } save(); render(); openCloud(); }
+function cloudSwapMe(){ S.settings.whoami = other(); if(sbUser){ S.roles = {...(S.roles||{}), [sbUser.id]: me()}; } save(); syncPushRow(false).catch(()=>{}); render(); openCloud(); }
 async function cloudLogout(){
   if(!confirm('Log out of '+(sbUser?.email||'your account')+'? Your data stays safe in the cloud, and this device will be cleared.')) return;
   try{ await cloudPush(); }catch(e){}
   if(pendingChanges().length && !confirm("Some recent changes haven't synced yet (you may be offline) and will be lost. Log out anyway?")) return;
+  await pushSignOut();
   try{ if(rtChannel) sb.removeChannel(rtChannel); await sb?.auth.signOut(); }catch(e){}
   clearInterval(pollTimer); rtChannel = null; sbUser = null;
   cloud.hid = null; cloud.code = null; cloud.since = null; synced = {}; saveCloud();
@@ -780,6 +796,97 @@ function openGuide(){
     <div class="formbtns"><button class="btn primary" onclick="closeModal()">Got it</button></div>`);
 }
 
+/* ---------- push notifications ---------- */
+const VAPID_PUBLIC = 'BC8t7BFkk9zco1y5UoDwR8B3iLCxjp1viu3K4w2-P-GJDK_C2F7ON-VXHlWI5afA3YVLJGC_oNuaXHVJnxwHci0';
+function pushSupported(){ return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window; }
+function pushBlocker(){
+  if(!cloud.hid || !sbUser) return 'account';
+  if(devicePlatform()==='ios' && !isInstalled()) return 'install';
+  if(!pushSupported()) return 'unsupported';
+  if(Notification.permission==='denied') return 'denied';
+  return null;
+}
+function b64uBytes(s){ s=s.replace(/-/g,'+').replace(/_/g,'/'); while(s.length%4) s+='='; const b=atob(s); const a=new Uint8Array(b.length); for(let i=0;i<b.length;i++) a[i]=b.charCodeAt(i); return a; }
+async function swReady(){ return Promise.race([navigator.serviceWorker.ready, new Promise((_,rej)=>setTimeout(()=>rej(new Error('The app is still setting up offline support — reopen it and try again.')), 8000))]); }
+async function pushSubscription(create){
+  const reg = await swReady();
+  let sub = await reg.pushManager.getSubscription();
+  if(!sub && create){
+    const perm = await Notification.requestPermission();
+    if(perm !== 'granted') throw new Error(perm==='denied' ? 'Notifications are blocked for HomeBase in your phone settings.' : 'Notifications were not allowed.');
+    sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:b64uBytes(VAPID_PUBLIC) });
+  }
+  return sub;
+}
+async function syncPushRow(create){
+  const n = prefs().notif;
+  if(!sb || !cloud.hid) return;
+  const sub = await pushSubscription(create && (n.summary || n.assigned));
+  if(!sub) return;
+  if(!n.summary && !n.assigned){ await sb.from('push_subs').delete().eq('endpoint', sub.endpoint); return; }
+  const j = sub.toJSON();
+  const { error } = await sb.from('push_subs').upsert({ endpoint:j.endpoint, household_id:cloud.hid, person:me(), p256dh:j.keys.p256dh, auth:j.keys.auth,
+    summary:n.summary, hour:n.hour, overdue:n.overdue, assigned:n.assigned, tz:Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata', updated_at:new Date().toISOString() }, { onConflict:'endpoint' });
+  if(error) throw new Error(/relation|does not exist|schema cache/i.test(error.message) ? 'Notifications are not set up on the server yet.' : error.message);
+}
+async function setNotif(k, v){
+  const old = prefs().notif;
+  S.settings.prefs = {...prefs(), notif:{...old, [k]:v}}; save();
+  try{ await syncPushRow(true); openPrefs(); if(v===true && (k==='summary'||k==='assigned')) toast('Notifications on ✓'); }
+  catch(e){ S.settings.prefs = {...prefs(), notif:old}; save(); openPrefs(e.message); }
+}
+async function sendTestPush(){
+  try{
+    await syncPushRow(true);
+    const { data, error } = await sb.functions.invoke('notify', { body:{ type:'test' } });
+    if(error) throw new Error('The notification service is not reachable yet.');
+    toast(data?.sent ? 'Test sent — check your notifications' : 'No notification was delivered. Try turning notifications off and on.');
+  }catch(e){ openPrefs(e.message); }
+}
+function notifyAssigned(t, before){
+  if(!t || !sb || !cloud.hid || !hasPartner() || t.done) return;
+  if(t.assignee===me()) return;
+  if(before && before.assignee===t.assignee) return;     // only when newly assigned to them
+  sb.functions.invoke('notify', { body:{ type:'assigned', hid:cloud.hid, to:t.assignee, title:t.title, fromName:who(me()), taskId:t.id } }).catch(()=>{});
+}
+async function pushSignOut(){
+  try{ const sub = await pushSubscription(false); if(sub){ await sb?.from('push_subs').delete().eq('endpoint', sub.endpoint); await sub.unsubscribe(); } }catch(e){}
+}
+function sw(on, onchange, disabled){ return `<label class="switch"><input type="checkbox" ${on?'checked':''} ${disabled?'disabled':''} onchange="${onchange}"><span></span></label>`; }
+function prefRow(title, sub, control){ return `<div class="mrow" style="cursor:default"><span class="mt">${title}${sub?`<span class="sub" style="display:block;font-weight:400;font-size:.78rem;margin-top:1px">${sub}</span>`:''}</span>${control}</div>`; }
+function leadChips(key, opts){ const v = prefs()[key]; return `<div class="chips" style="margin:0;flex-wrap:nowrap">${opts.map(n=>`<button class="chip ${v===n?'on':''}" style="min-height:1.9rem;padding:.2rem .6rem" onclick="setPref('${key}',${n});openPrefs()">${n===0?'Same day':n+'d'}</button>`).join('')}</div>`; }
+function openPrefs(msg){
+  const p = prefs(), n = p.notif, block = pushBlocker();
+  const notice = {
+    account: `Create a free account to get notifications. <a href="#" onclick="openAuth('signup');return false">Create account</a>`,
+    install: `On iPhone, notifications work only in the installed app. <a href="#" onclick="openInstall();return false">Install HomeBase</a>, then turn this on from there.`,
+    unsupported: `This browser can't show notifications. Try Chrome on Android, or the installed app on iPhone.`,
+    denied: `Notifications are blocked for HomeBase. Allow them in your phone's settings, then come back.`,
+  }[block];
+  const err = msg ? `<p class="sub" style="color:var(--red);margin:.4rem 0">${esc(msg)}</p>` : '';
+  showModal(`
+    <h2>🔔 Preferences</h2>${err}
+    <h3>Notifications</h3>
+    ${notice ? `<div class="card" style="background:var(--blue-soft)"><div class="meta" style="display:block">${notice}</div></div>` : ''}
+    <div class="mgroup" style="margin-top:.4rem">
+      ${prefRow('Morning summary', "Today's tasks, payments &amp; reminders — names only", sw(n.summary, "setNotif('summary',this.checked)", !!block))}
+      ${n.summary ? prefRow('Time', '', `<div class="chips" style="margin:0">${[7,8,9].map(h=>`<button class="chip ${n.hour===h?'on':''}" style="min-height:1.9rem;padding:.2rem .7rem" onclick="setNotif('hour',${h})">${h} AM</button>`).join('')}</div>`) : ''}
+      ${n.summary ? prefRow('Include overdue items', '', sw(n.overdue, "setNotif('overdue',this.checked)", !!block)) : ''}
+      ${hasPartner() ? prefRow(`When ${esc(who(other()))} assigns me a task`, '', sw(n.assigned, "setNotif('assigned',this.checked)", !!block)) : ''}
+    </div>
+    ${(n.summary || n.assigned) && !block ? `<button class="btn" style="margin-top:.5rem" onclick="sendTestPush()">Send a test notification</button>` : ''}
+    <h3>Privacy</h3>
+    <div class="mgroup">${prefRow('Hide amounts', 'Shows ₹ •••• — tap 👁 at the top to peek', sw(p.hideAmounts, "setPref('hideAmounts',this.checked);ui.reveal=false;render();openPrefs()"))}</div>
+    <h3>Default reminders for new items</h3>
+    <div class="mgroup">
+      ${prefRow('Monthly payments', 'Remind me before', leadChips('leadPay',[0,1,3,7]))}
+      ${prefRow('Quarterly / yearly payments', 'Remind me before', leadChips('leadPayLong',[7,15,30]))}
+      ${prefRow('To-do reminders', 'Remind me before', leadChips('leadTodo',[1,3,7,15]))}
+    </div>
+    <p class="sub" style="margin-top:.4rem">These apply to items you add from now on. Existing items keep their own setting.</p>
+    <div class="formbtns"><button class="btn" onclick="openSettings()">‹ Settings</button><button class="btn primary" onclick="closeModal()">Done</button></div>`);
+}
+
 /* ---------- ui state ---------- */
 const ui = { view:'home', taskFilter:'open', money:'obligations', house:'groceries', expMonth:monthKey(), oblMonth:monthKey(), expanded:null };
 const NAV_ALL = [['home','🏠','Home'],['tasks','✅','Tasks'],['money','💰','Money'],['reminders','🗓️','Upcoming'],['house','🧺','Household']];
@@ -789,6 +896,7 @@ function go(v, sub){ if(v==='house' && !FEATURES.household) v='home'; if(v==='mo
 function render(){
   document.getElementById('nav').innerHTML = NAV.map(([k,ic,l]) =>
     `<button class="${ui.view===k?'on':''}" onclick="go('${k}')"><span class="ic">${ic}</span>${l}</button>`).join('');
+  const eb = document.getElementById('eyebtn'); if(eb){ eb.style.display = prefs().hideAmounts ? '' : 'none'; eb.textContent = ui.reveal ? '🙈' : '👁'; eb.title = ui.reveal ? 'Hide amounts' : 'Show amounts for 30 seconds'; }
   const T = {home:'Home<span>Base</span>',tasks:'Tasks',money:'Money',reminders:'Upcoming',house:'Household'};
   document.getElementById('ptitle').innerHTML = T[ui.view];
   const welcome = !S.onboarded;
@@ -914,7 +1022,7 @@ const FREQ = {monthly:1, quarterly:3, half:6, yearly:12, once:0};
 const FREQ_LABEL = {monthly:'Monthly', quarterly:'Quarterly', half:'Half-yearly', yearly:'Yearly', once:'One-time'};
 const OBL_CATS = ['Housing','Loan / EMI','Utilities','Insurance','Subscription','Education','Investment / SIP','Maintenance','Other'];
 function freqOf(o){ return FREQ[o.freq]!==undefined ? o.freq : 'monthly'; }
-function remindOf(x){ const n = Number(x.remindDays); return isNaN(n) || x.remindDays==='' || x.remindDays==null ? (x.freq && freqOf(x)!=='monthly' ? 15 : 3) : n; }
+function remindOf(x){ const n = Number(x.remindDays); const p = prefs(); return isNaN(n) || x.remindDays==='' || x.remindDays==null ? (x.freq ? (freqOf(x)!=='monthly' ? p.leadPayLong : p.leadPay) : p.leadTodo) : n; }
 function monthsBetween(a,b){ const [ay,am]=a.split('-').map(Number), [by,bm]=b.split('-').map(Number); return (by-ay)*12+(bm-am); }
 function viewMoney(){
   const tabs = [['obligations','Obligations'],['expenses','Expenses']].filter(([k])=>k!=='expenses' || FEATURES.expenses);
@@ -1041,7 +1149,7 @@ function icsFromObligation(o){
   const last = o.dueDay>28, date = last ? ymd(new Date(+mk.slice(0,4), +mk.slice(5,7), 0)) : oblDue(o,mk);
   let rrule = n ? `FREQ=MONTHLY;INTERVAL=${n};BYMONTHDAY=${last?-1:o.dueDay}` : null;
   if(rrule && o.endMonth){ const e = new Date(+o.endMonth.slice(0,4), +o.endMonth.slice(5,7), 0); rrule += ';UNTIL='+ymd(e).replace(/-/g,'')+'T235959'; }
-  return {uid:'obl-'+o.id, title:`Pay: ${o.name}${Number(o.amount)?' ('+inr(o.amount)+')':''}`, desc:`${FREQ_LABEL[f]} · ${o.category||''}${o.notes?'\n'+o.notes:''}`, date, rrule, lead:remindOf(o)};
+  return {uid:'obl-'+o.id, title:`Pay: ${o.name}${Number(o.amount)?' ('+inrRaw(o.amount)+')':''}`, desc:`${FREQ_LABEL[f]} · ${o.category||''}${o.notes?'\n'+o.notes:''}`, date, rrule, lead:remindOf(o)};
 }
 function icsFromReminder(r){
   return {uid:'rem-'+r.id, title:r.title, desc:r.type+(r.notes?'\n'+r.notes:''), date:r.date, rrule: r.repeat&&r.repeat!=='0' ? `FREQ=MONTHLY;INTERVAL=${r.repeat}` : null, lead:remindOf(r)};
@@ -1164,7 +1272,7 @@ const FORMS = {
     {k:'category',l:'Category',t:'select',o:OBL_CATS.map(x=>[x,x])},
     {k:'remindDays',l:'Remind me',t:'select',o:[['0','On the due date'],['1','1 day before'],['3','3 days before'],['7','1 week before'],['15','15 days before'],['30','1 month before']]},
     {k:'notes',l:'Notes',t:'textarea',ph:'Policy no., insurer, loan account, etc.'}],
-    def:()=>({freq:'monthly',startMonth:ui.oblMonth||monthKey(),dueDay:5,category:'Housing',remindDays:'3'})},
+    def:()=>({freq:'monthly',startMonth:ui.oblMonth||monthKey(),dueDay:5,category:'Housing',remindDays:String(prefs().leadPay)})},
   expense:{col:'expenses',title:'Expense',fields:()=>[
     {k:'amount',l:'Amount (₹)',t:'number',req:1},
     {k:'category',l:'Category',t:'select',o:EXP_CATS.map(x=>[x,x])},
@@ -1177,7 +1285,7 @@ const FORMS = {
     {k:'repeat',l:'Repeats',t:'select',o:Object.entries(REP_LABEL)},
     {k:'remindDays',l:'Remind me',t:'select',o:[['0','On the due date'],['1','1 day before'],['3','3 days before'],['7','1 week before'],['15','15 days before'],['30','1 month before']]},
     ...(FEATURES.expenses ? [{k:'cost',l:'Usual cost (₹, optional)',t:'number',ph:'Offered as an expense when done'}] : []),
-    {k:'notes',l:'Notes',t:'textarea',ph:'Service centre, document no., etc.'}], def:()=>({type:'Vehicle service',repeat:'6',date:today(),remindDays:'7'})},
+    {k:'notes',l:'Notes',t:'textarea',ph:'Service centre, document no., etc.'}], def:()=>({type:'Vehicle service',repeat:'6',date:today(),remindDays:String(prefs().leadTodo)})},
   help:{col:'help',title:'House help',fields:()=>[
     {k:'name',l:'Name',t:'text',req:1},
     {k:'role',l:'Role',t:'select',o:['Maid','Cook','Driver','Nanny','Gardener','Other'].map(x=>[x,x])},
@@ -1228,8 +1336,12 @@ function saveForm(kind, id, form){
     data[f.k] = v;
   });
   if(kind==='obligation'){ data.dueDay = Math.min(31, Math.max(1, Math.round(data.dueDay)||1)); if(!data.startMonth) data.startMonth=ui.oblMonth; if(data.freq==='once'){ data.endMonth=''; } if(data.endMonth && data.endMonth<data.startMonth){ toast('End month is before start month'); return; } }
+  if(kind==='obligation' && !id && data.freq!=='monthly' && String(data.remindDays)===String(prefs().leadPay)) data.remindDays = String(prefs().leadPayLong);
+  const before = id ? {...S[F.col].find(x=>x.id===id)} : null;
+  let newId = id;
   if(id){ Object.assign(S[F.col].find(x=>x.id===id), data); }
-  else { S[F.col].push({...F.def(), ...data, id:uid()}); }
+  else { newId = uid(); S[F.col].push({...F.def(), ...data, id:newId}); }
+  if(kind==='task') notifyAssigned(S.tasks.find(x=>x.id===newId), before);
   save(); closeModal(); render();
   if(!cloud.hid && !S.demo && !S.settings.savedNote){ S.settings.savedNote = true; save(); toast('Saved on this phone only — create a free account in ⚙︎ Settings to back it up'); }
   else toast('Saved');
@@ -1275,6 +1387,7 @@ function openSettings(){
       ${mrow('👥','People', names, 'openPeople()')}
     </div>
     <div class="mgroup">
+      ${mrow('🔔','Preferences', 'Notifications, privacy', 'openPrefs()')}
       ${mrow('🎨','Display &amp; theme', themeName, 'openAdmin()')}
       ${mrow('💾','Data &amp; backup', cloud.hid ? 'Synced' : 'This phone only', 'openData()')}
       ${isInstalled() ? '' : mrow('📱','Install as an app', '', 'openInstall()')}

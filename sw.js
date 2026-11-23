@@ -2,7 +2,7 @@
    - The app page is fetched fresh when online (so updates arrive), with the saved copy used when offline.
    - Icons, fonts and the sync library are served from the saved copy and refreshed in the background.
    - Supabase (your data) is never cached here; the app handles syncing itself. */
-const VERSION = 'hb-shell-v1';
+const VERSION = 'hb-shell-v2';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 const KEEP = [VERSION, 'hb-photos'];
 
@@ -53,4 +53,27 @@ self.addEventListener('fetch', e => {
       return cached || net;
     })
   );
+});
+
+// ---------- notifications ----------
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) { d = { body: e.data ? e.data.text() : '' }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'HomeBase', {
+    body: d.body || '',
+    icon: './icon-192.png',
+    badge: './icon-192.png',
+    tag: d.tag || 'homebase',
+    renotify: true,
+    data: { url: d.url || './' },
+  }));
+});
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const target = new URL(e.notification.data?.url || './', self.registration.scope).href;
+  e.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    for (const c of list) { if (c.url.startsWith(self.registration.scope)) { c.focus(); return; } }
+    return clients.openWindow(target);
+  }));
 });
