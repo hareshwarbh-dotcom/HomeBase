@@ -154,4 +154,24 @@ create policy "household can delete photos" on storage.objects for delete to aut
 
 Morning summaries and "partner assigned you a task" alerts are sent by the Supabase Edge Function `notify` (source kept outside this repo), triggered hourly by `pg_cron`. Notifications contain item names only, never amounts. Users opt in under Settings → Preferences. On iPhone they work only in the installed (home-screen) app.
 
+## Install tracking
+
+Signed-in devices check in at most once an hour with: platform (iOS / Android / desktop), mode (installed app or browser), browser, app version, open count and last seen. No household content.
+
+```sql
+create table if not exists devices (
+  device_id text not null,
+  user_id uuid not null default auth.uid() references auth.users on delete cascade,
+  household_id uuid references households on delete set null,
+  platform text, mode text, browser text, app_version text,
+  opens int default 1,
+  first_seen timestamptz default now(),
+  last_seen timestamptz default now(),
+  primary key (device_id, user_id)
+);
+alter table devices enable row level security;
+create policy "own devices" on devices for all
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+```
+
 **Security note:** the publishable key is meant to be public. Each household's data is protected by row-level security, so only its members can read or write it.

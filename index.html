@@ -366,6 +366,8 @@ async function cloudStart(){
   }
   await cloudPush();
   cloudSubscribe();
+  deviceCheckin();
+  setTimeout(maybeAskAlerts, 2500);
   try{ if(pushSupported() && Notification.permission==='granted' && (prefs().notif.summary || prefs().notif.assigned)) syncPushRow(false).catch(()=>{}); }catch(e){}
   clearInterval(pollTimer); pollTimer = setInterval(()=>{ if(document.visibilityState==='visible') cloudPull(false); }, 30000);
 }
@@ -892,6 +894,62 @@ function openPrefs(msg){
     <div class="formbtns"><button class="btn" onclick="openSettings()">‹ Settings</button><button class="btn primary" onclick="closeModal()">Done</button></div>`);
 }
 
+/* ---------- one simple "allow alerts?" question ---------- */
+const ASK_KEY = 'homebase.alertask';
+function askState(){ try{ return JSON.parse(localStorage.getItem(ASK_KEY)) || {count:0, last:0}; }catch(e){ return {count:0, last:0}; } }
+function setAskState(st){ try{ localStorage.setItem(ASK_KEY, JSON.stringify(st)); }catch(e){} }
+let askedThisSession = false;
+function shouldAskAlerts(){
+  if(askedThisSession || !S.onboarded || S.demo || pushBlocker()) return false;
+  if(Notification.permission !== 'default') return false;          // already allowed or blocked
+  const st = askState();
+  if(st.count >= 2) return false;                                   // asked twice: never again
+  if(st.count === 1 && Date.now() - st.last < 3*864e5) return false;  // second ask after 3 days
+  return true;
+}
+function maybeAskAlerts(){
+  try{
+    if(!shouldAskAlerts() || document.querySelector('#modal .overlay')) return;
+    askedThisSession = true;
+    showModal(`<div style="text-align:center;padding:.6rem 0 .2rem">
+        <div style="font-size:2.6rem">🔔</div>
+        <h2 style="margin-top:.4rem">Get alerts from HomeBase?</h2>
+        <p class="sub" style="font-size:.95rem">We'll let you know when something needs your attention. You can change this anytime in Settings.</p></div>
+      <div class="formbtns"><button class="btn" onclick="alertsNotNow()">Not now</button><button class="btn primary" onclick="alertsYes()">Turn on</button></div>`);
+  }catch(e){}
+}
+function alertsNotNow(){ const st = askState(); setAskState({count:st.count+1, last:Date.now()}); closeModal(); }
+async function alertsYes(){
+  const st = askState(); setAskState({count:st.count+1, last:Date.now()});
+  const old = prefs().notif;
+  S.settings.prefs = {...prefs(), notif:{...old, summary:true, assigned:true}}; save();
+  try{ await syncPushRow(true); closeModal(); toast('Alerts are on ✓'); }
+  catch(e){ S.settings.prefs = {...prefs(), notif:old}; save(); closeModal(); toast(/blocked|allowed/i.test(e.message) ? 'No problem — you can turn alerts on later in Settings' : e.message); }
+}
+
+/* ---------- device check-in: installed app or browser (no personal data) ---------- */
+const APP_VERSION = '2026.11.23';
+function deviceId(){
+  try{ let d = JSON.parse(localStorage.getItem('homebase.device')||'null');
+    if(!d){ d = {id: uid()+uid(), opens:0}; }
+    return d; }catch(e){ return {id:'unknown', opens:0}; }
+}
+let lastCheckin = 0;
+async function deviceCheckin(){
+  if(!sb || !sbUser || Date.now() - lastCheckin < 60*60*1000) return;   // at most once an hour
+  lastCheckin = Date.now();
+  const d = deviceId(); d.opens = (d.opens||0) + 1;
+  try{ localStorage.setItem('homebase.device', JSON.stringify(d)); }catch(e){}
+  const ua = navigator.userAgent;
+  const browser = devicePlatform()==='ios' ? iosBrowser() : /Edg\//.test(ua) ? 'Edge' : /SamsungBrowser/.test(ua) ? 'Samsung' : /Firefox/.test(ua) ? 'Firefox' : /Chrome/.test(ua) ? 'Chrome' : /Safari/.test(ua) ? 'Safari' : 'Other';
+  try{
+    await sb.from('devices').upsert({ device_id:d.id, household_id:cloud.hid || null, platform:devicePlatform(),
+      mode:isInstalled() ? 'installed' : 'browser', browser, app_version:APP_VERSION, opens:d.opens, last_seen:new Date().toISOString() },
+      { onConflict:'device_id,user_id' });
+  }catch(e){}   // table not created yet: ignore quietly
+}
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible'){ deviceCheckin(); setTimeout(maybeAskAlerts, 1500); } });
+
 /* ---------- ui state ---------- */
 const ui = { view:'home', taskFilter:'open', money:'obligations', house:'groceries', expMonth:monthKey(), oblMonth:monthKey(), expanded:null };
 const NAV_ALL = [['home','🏠','Home'],['tasks','✅','Tasks'],['money','💰','Money'],['reminders','🗓️','Upcoming'],['house','🧺','Household']];
@@ -1358,7 +1416,7 @@ function del(col, id, quiet){
   toast('Deleted', ()=>{ S[col].splice(i,0,item); save(); render(); });
 }
 function showModal(html){ document.getElementById('modal').innerHTML = `<div class="overlay" onclick="if(event.target===this)closeModal()"><div class="sheet">${html}</div></div>`; hydratePhotos(); }
-function closeModal(){ document.getElementById('modal').innerHTML=''; if(needRender){ needRender=false; render(); } }
+function closeModal(){ document.getElementById('modal').innerHTML=''; if(needRender){ needRender=false; render(); } if(typeof maybeAskAlerts==='function' && sbUser) setTimeout(maybeAskAlerts, 900); }
 
 /* ---------- FAB ---------- */
 function fab(){
