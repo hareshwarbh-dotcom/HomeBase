@@ -18,7 +18,7 @@
 :root{
   --fs:14px;
   --bg:#FAF7F2; --card:#FFFFFF; --ink:#1C1F2A; --on-ink:#FFFFFF; --muted:#6B6F7A; --line:#E8E2D7; --soft:#F1EEE8;
-  --saffron:#E8891C; --red:#C8463D; --green:#3F8F5B; --blue:#3C6E9F;
+  --saffron:#2F6FDB; --red:#C8463D; --green:#3F8F5B; --blue:#3C6E9F;
   --red-soft:#FBEAE8; --green-soft:#E7F3EB; --blue-soft:#E6EEF6; --shadow:rgba(28,31,42,.12);
   --accent-soft:color-mix(in srgb,var(--saffron) 13%,var(--card));
   --accent-text:color-mix(in srgb,var(--saffron) 72%,var(--ink));
@@ -246,14 +246,14 @@ function compress(file){
 
 
 /* ---------- display / admin panel (hidden: tap the page title 5 times, or open with #admin) ---------- */
-const UI_DEF = {fs:'m', density:'compact', theme:'dark', accent:'saffron', badge:'auto'};
+const UI_DEF = {fs:'m', density:'compact', theme:'dark', accent:'blue', badge:'auto'};
 const FS = {s:'13px', m:'14px', l:'15.5px', xl:'17px'};
-const ACCENTS = {saffron:'#E8891C', teal:'#1F8A84', indigo:'#5B5BD6', rose:'#D14B72', green:'#3F8F5B'};
+const ACCENTS = {blue:'#2F6FDB', saffron:'#E8891C', teal:'#1F8A84', indigo:'#5B5BD6', rose:'#D14B72', green:'#3F8F5B'};
 function uiPrefs(){ return Object.assign({}, UI_DEF, S.settings.ui||{}); }
 function applyUI(){
   const u = uiPrefs(), h = document.documentElement;
   h.style.setProperty('--fs', FS[u.fs]||FS.m);
-  h.style.setProperty('--saffron', ACCENTS[u.accent]||ACCENTS.saffron);
+  h.style.setProperty('--saffron', ACCENTS[u.accent]||ACCENTS.blue);
   const dark = u.theme==='dark' || (u.theme==='auto' && !!window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
   h.dataset.theme = dark ? 'dark' : 'light';
   h.classList.toggle('comfy', u.density==='comfortable');
