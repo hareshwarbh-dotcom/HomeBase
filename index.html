@@ -114,6 +114,22 @@ textarea{min-height:4.5rem;resize:vertical}
 .swatch{width:2.2rem;height:2.2rem;border-radius:50%;border:3px solid var(--bg);box-shadow:0 0 0 1px var(--line);cursor:pointer}
 .swatch.on{box-shadow:0 0 0 2px var(--ink)}
 .adminrow{margin-bottom:.9rem}
+.seg{display:inline-flex;background:var(--soft);border:1px solid var(--line);border-radius:99px;padding:2px}
+.seg button{border:none;background:none;font:inherit;font-size:.82rem;color:var(--muted);padding:.3rem .8rem;border-radius:99px;cursor:pointer;min-height:2rem}
+.seg button.on{background:var(--card);color:var(--ink);font-weight:600;box-shadow:0 1px 3px var(--shadow)}
+.cal{padding:.5rem .4rem .6rem}
+.cgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.chead div{text-align:center;font-size:.68rem;color:var(--muted);font-weight:600;padding:.15rem 0 .3rem}
+.cday{border:none;background:none;font:inherit;color:var(--ink);aspect-ratio:1/1.05;border-radius:.6rem;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;padding:0;min-height:2.4rem}
+.cday .cn{font-size:.88rem;width:1.8rem;height:1.8rem;display:flex;align-items:center;justify-content:center;border-radius:50%}
+.cday.today .cn{border:2px solid var(--saffron);font-weight:700}
+.cday.sel{background:var(--ink)} .cday.sel .cn{color:var(--on-ink);border-color:transparent}
+.cday.late .cn{color:var(--red);font-weight:700} .cday.sel.late .cn{color:var(--on-ink)}
+.cdots{display:flex;gap:2px;height:5px}
+.cdots i,.clegend i{width:5px;height:5px;border-radius:50%;display:inline-block}
+.d-pay{background:var(--saffron)} .d-rem{background:#E8A21C} .d-task{background:#D14B72}
+.clegend{display:flex;gap:.9rem;justify-content:center;font-size:.7rem;color:var(--muted);margin-top:.5rem}
+.clegend span{display:flex;align-items:center;gap:.3rem}
 .switch{position:relative;display:inline-block;width:2.6rem;height:1.5rem;flex-shrink:0}
 .switch input{opacity:0;width:0;height:0;position:absolute}
 .switch span{position:absolute;inset:0;background:var(--soft);border:1px solid var(--line);border-radius:99px;transition:.2s;cursor:pointer}
@@ -979,7 +995,7 @@ function feed(){
     for(let k=-2;k<=24;k++){
       const m = monthKey(addMonths(cur+'-01',k));
       if(!oblApplies(o,m) || isPaid('obl:'+o.id,m)) continue;
-      out.push({kind:'pay', id:o.id, mk:m, src:'💰', title:o.name, sub:inr(o.amount)+(freqOf(o)!=='monthly'?' · '+FREQ_LABEL[freqOf(o)]:'')+' · '+(o.category||''), date:oblDue(o,m), lead:remindOf(o), go:`ui.oblMonth='${m}';go('money','obligations')`});
+      out.push({kind:'pay', id:o.id, mk:m, src:catIcon(o.category), title:o.name, sub:'Payment'+(freqOf(o)!=='monthly'?' · '+FREQ_LABEL[freqOf(o)]:''), date:oblDue(o,m), lead:remindOf(o), go:`ui.oblMonth='${m}';go('money','obligations')`});
       break;   // only the earliest unpaid one; ticking it reveals the next
     }
   });
@@ -991,7 +1007,8 @@ function feed(){
 function feedRow(x, withActions){
   const act = !withActions ? '' :
     x.kind==='pay' ? `<button class="check" title="Mark paid" onclick="event.stopPropagation();togglePaid('obl:${x.id}','${x.mk}')">✓</button>` :
-    x.kind==='rem' ? `<button class="btn accent" onclick="event.stopPropagation();doneReminder('${x.id}')">Done</button>` : '';
+    x.kind==='rem' ? `<button class="btn accent" onclick="event.stopPropagation();doneReminder('${x.id}')">Done</button>` :
+    x.kind==='task' ? `<button class="check" title="Mark done" onclick="event.stopPropagation();toggleTask('${x.id}')">✓</button>` : '';
   return `<div class="card row" onclick="${x.go}" style="cursor:pointer">
       <div class="src">${x.src}</div>
       <div class="grow"><div class="title">${esc(x.title)}</div><div class="meta">${esc(x.sub)} ${dueTag(x.date)}</div></div>
@@ -1103,12 +1120,32 @@ function oblApplies(o, mk){
   return d>=0 && d%n===0;
 }
 function ord(n){ const s=['th','st','nd','rd'], v=n%100; return n+(s[(v-20)%10]||s[v]||s[0]); }
+
+const CAT_ICON = {'Housing':'🏠','Loan / EMI':'🏦','Utilities':'⚡','Insurance':'🛡️','Subscription':'📺','Education':'🎓','Investment / SIP':'📈','Maintenance':'🔧','Other':'📌'};
+function catIcon(c){ return CAT_ICON[c] || '💰'; }
+function dueWords(d){
+  const n = daysUntil(d);
+  if(n < 0) return `<span style="color:var(--red)">${-n} day${n===-1?'':'s'} overdue</span>`;
+  if(n === 0) return `<span style="color:var(--red)">Today</span>`;
+  if(n === 1) return `<span style="color:var(--accent-text)">Tomorrow</span>`;
+  if(n <= 7) return `<span style="color:var(--accent-text)">${n} days left</span>`;
+  return '';
+}
 function viewObligations(){
   const mk = ui.oblMonth, cur = monthKey();
   const list = S.obligations.filter(o=>oblApplies(o,mk)).sort((a,b)=>a.dueDay-b.dueDay);
-  const total = list.reduce((a,o)=>a+Number(o.amount),0);
-  const paid = list.filter(o=>isPaid('obl:'+o.id,mk)).reduce((a,o)=>a+Number(o.amount),0);
+  const isP = o => isPaid('obl:'+o.id, mk);
+  const unpaid = list.filter(o=>!isP(o)), paid = list.filter(isP);
+  const pct = list.length ? Math.round(paid.length / list.length * 100) : 0;
   const when = mk<cur ? 'Past month' : mk>cur ? 'Upcoming month' : 'This month';
+  const row = o => { const p = isP(o), f = freqOf(o);
+    const extra = f!=='monthly' ? FREQ_LABEL[f] : (o.endMonth ? 'until '+monthName(o.endMonth) : '');
+    const line = p ? `<span style="color:var(--green)">Paid ✓</span>` : [`Due ${ord(o.dueDay)}`, mk===cur||mk<cur ? dueWords(oblDue(o,mk)) : '', extra].filter(Boolean).join(' · ');
+    return `<div class="card row" style="${p?'opacity:.62':''}">
+      <div class="src">${catIcon(o.category)}</div>
+      <div class="grow" onclick="openForm('obligation','${o.id}')" style="cursor:pointer"><div class="title">${esc(o.name)}</div><div class="meta">${line}</div></div>
+      <button class="check ${p?'on':''}" title="${p?'Mark unpaid':'Mark paid'}" onclick="togglePaid('obl:${o.id}','${mk}')">✓</button>
+    </div>`; };
   return `
     <div class="monthnav">
       <button class="iconbtn" onclick="shiftObl(-1)">‹</button>
@@ -1116,14 +1153,14 @@ function viewObligations(){
         <div class="sub">${when}${mk!==cur?` · <a href="#" onclick="ui.oblMonth=monthKey();render();return false">Back to today</a>`:''}</div></div>
       <button class="iconbtn" onclick="shiftObl(1)">›</button>
     </div>
-    <div class="card"><div class="summary"><div><span class="sub">Due this month</span><b>${inr(total)}</b></div><div><span class="sub">Paid</span><b style="color:var(--green)">${inr(paid)}</b></div><div><span class="sub">${mk<cur?'Missed':'Pending'}</span><b style="color:var(--red)">${inr(total-paid)}</b></div></div>
-      </div>
-    ${list.length ? list.map(o=>{ const p=isPaid('obl:'+o.id,mk), f=freqOf(o); return `
-      <div class="card row">
-        <div class="grow" onclick="openForm('obligation','${o.id}')" style="cursor:pointer"><div class="title">${esc(o.name)}</div>
-          <div class="meta">${inr(o.amount)} · ${esc(o.category||'')} · ${ord(o.dueDay)} ${f!=='monthly'?`<span class="pill later">${FREQ_LABEL[f]}</span>`:''}${o.endMonth&&f!=='once'?`<span class="pill later">until ${monthName(o.endMonth)}</span>`:''} ${p?'<span class="pill ok">Paid</span>':dueTag(oblDue(o,mk))}</div></div>
-        <button class="check ${p?'on':''}" onclick="togglePaid('obl:${o.id}','${mk}')">✓</button>
-      </div>`;}).join('') : `<div class="empty">Nothing due in ${monthName(mk)}.<br>Tap + to add an obligation.</div>`}
+    ${list.length ? `<div class="card">
+      <div class="row" style="justify-content:space-between;align-items:baseline">
+        <div><span class="mtitle big">${paid.length}</span><span class="sub"> of ${list.length} paid</span></div>
+        <span class="sub">${unpaid.length ? `${unpaid.length} ${mk<cur?'missed':'to go'}` : 'All done 🎉'}</span></div>
+      <div class="bar" style="height:6px;margin-top:.45rem"><i style="width:${pct}%;background:var(--green)"></i></div></div>` : ''}
+    ${unpaid.map(row).join('')}
+    ${paid.length ? `<h3>Paid ${mk===cur?'this month':'in '+monthName(mk).split(' ')[0]}</h3>${paid.map(row).join('')}` : ''}
+    ${list.length ? '' : `<div class="empty">Nothing due in ${monthName(mk)}.<br>Tap + to add an obligation.</div>`}
   `;
 }
 function shiftObl(n){ ui.oblMonth = monthKey(addMonths(ui.oblMonth+'-01', n)); render(); }
@@ -1160,17 +1197,89 @@ const REM_TYPES = ['Vehicle service','PUC / FASTag','Appliance / AMC','Document 
 const REM_ICON = {'Insurance':'🛡️','Vehicle service':'🚗','PUC / FASTag':'🧾','Appliance / AMC':'🔧','Document expiry':'🪪','Gas booking':'🔥','Pet':'🐶','Health check-up':'🩺','Home repair':'🛠️','Other':'📌'};
 const REP_LABEL = {'0':'One-time','1':'Every month','3':'Every 3 months','6':'Every 6 months','12':'Every year'};
 const REM_EXP_CAT = {'Vehicle service':'Transport / Fuel','PUC / FASTag':'Transport / Fuel','Appliance / AMC':'Household','Gas booking':'Household','Pet':'Pets','Health check-up':'Health','Home repair':'Household'};
-function viewReminders(){
+function upFilterOk(kind){
   const f = ui.upFilter || 'all';
-  const items = feed().filter(x => x.kind!=='task' && (f==='all' || (f==='pay'&&x.kind==='pay') || (f==='todo'&&x.kind!=='pay')))
-    .filter(x => x.kind==='rem' || daysUntil(x.date)<=90);
+  return f==='all' || (f==='pay' && kind==='pay') || (f==='todo' && kind==='rem') || (f==='task' && kind==='task');
+}
+function upView(){ return S.settings.upView || 'cal'; }
+function viewReminders(){
+  const f = ui.upFilter || 'all', v = upView();
+  const chips = [['all','All'],['pay','💰 Payments'],['todo','🔔 Reminders'],['task','✅ Tasks']];
+  const toggle = `<div class="row" style="justify-content:space-between;margin-bottom:.5rem">
+      <div class="seg"><button class="${v==='cal'?'on':''}" onclick="S.settings.upView='cal';save();render()">📅 Calendar</button><button class="${v==='list'?'on':''}" onclick="S.settings.upView='list';save();render()">☰ List</button></div></div>
+    <div class="chips">${chips.map(([k,l])=>`<button class="chip ${f===k?'on':''}" onclick="ui.upFilter='${k}';render()">${l}</button>`).join('')}</div>`;
+  return toggle + (v==='cal' ? viewCalendar() : viewUpList());
+}
+function viewUpList(){
+  const items = feed().filter(x => x.kind!=='date' && upFilterOk(x.kind)).filter(x => x.kind!=='pay' || daysUntil(x.date)<=90);
   const groups = [['Overdue',x=>daysUntil(x.date)<0],['This week',x=>{const d=daysUntil(x.date);return d>=0&&d<=7}],['This month',x=>{const d=daysUntil(x.date);return d>7&&d<=31}],['Later',x=>daysUntil(x.date)>31]];
-  const chips = [['all','All'],['pay','💰 Payments'],['todo','🔔 To-dos']];
+  return items.length ? groups.map(([g,fn])=>{ const gi=items.filter(fn); return gi.length?`<h3>${g}</h3>`+gi.map(x=>feedRow(x,true)).join(''):''; }).join('')
+    : `<div class="empty">Nothing coming up. Tap + to add a payment or a reminder.</div>`;
+}
+/* every dated item in a month, including repeats of reminders and paid payments */
+function calItems(mk){
+  const out = [], [y,m] = mk.split('-').map(Number), end = `${mk}-${pad(new Date(y,m,0).getDate())}`;
+  S.obligations.forEach(o=>{ if(!oblApplies(o,mk)) return;
+    out.push({kind:'pay', id:o.id, mk, src:catIcon(o.category), title:o.name, sub:'Payment'+(freqOf(o)!=='monthly'?' · '+FREQ_LABEL[freqOf(o)]:''), date:oblDue(o,mk), done:isPaid('obl:'+o.id,mk)}); });
+  S.reminders.filter(r=>!r.done).forEach(r=>{
+    const rep = Number(r.repeat||0);
+    for(let k=0; k<120; k++){
+      const d = k===0 ? r.date : addMonths(r.date, k*rep);
+      if(d > end) break;
+      if(d.slice(0,7)===mk) out.push({kind:'rem', id:r.id, src:REM_ICON[r.type]||'📌', title:r.title, sub:r.type+(rep?' · '+REP_LABEL[r.repeat]:''), date:d, projected:k>0});
+      if(!rep) break;
+    }
+  });
+  S.tasks.forEach(t=>{ if(t.due && t.due.slice(0,7)===mk) out.push({kind:'task', id:t.id, src:'✅', title:t.title, sub:hasPartner()?'Task · '+who(t.assignee):'Task', date:t.due, done:!!t.done}); });
+  return out.filter(x=>upFilterOk(x.kind)).sort((a,b)=>a.date.localeCompare(b.date) || (a.done-b.done));
+}
+function calRow(x){
+  const act = x.kind==='pay' ? `<button class="check ${x.done?'on':''}" title="${x.done?'Mark unpaid':'Mark paid'}" onclick="event.stopPropagation();togglePaid('obl:${x.id}','${x.mk}')">✓</button>`
+    : x.kind==='task' ? `<button class="check ${x.done?'on':''}" onclick="event.stopPropagation();toggleTask('${x.id}')">✓</button>`
+    : x.projected ? `<span class="pill later">Repeats</span>` : `<button class="btn accent" onclick="event.stopPropagation();doneReminder('${x.id}')">Done</button>`;
+  const open = x.kind==='pay' ? `openForm('obligation','${x.id}')` : x.kind==='task' ? `ui.expanded='${x.id}';go('tasks')` : `openForm('reminder','${x.id}')`;
+  const status = x.done ? `<span class="pill ok">${x.kind==='pay'?'Paid':'Done'}</span>` : dueTag(x.date);
+  return `<div class="card row ${x.done?'done':''}" onclick="${open}" style="cursor:pointer;${x.done?'opacity:.62':''}">
+    <div class="src">${x.src}</div><div class="grow"><div class="title">${esc(x.title)}</div><div class="meta">${esc(x.sub)} ${status}</div></div>${act}</div>`;
+}
+function shiftCal(n){ ui.calMonth = monthKey(addMonths((ui.calMonth||monthKey())+'-01', n)); ui.calDay = null; render(); }
+function viewCalendar(){
+  const mk = ui.calMonth || monthKey(), t = today(), [y,m] = mk.split('-').map(Number);
+  const items = calItems(mk);
+  const byDay = {}; items.forEach(x=>{ (byDay[x.date] = byDay[x.date] || []).push(x); });
+  const first = new Date(y, m-1, 1), lead = (first.getDay()+6)%7, days = new Date(y, m, 0).getDate();
+  const cells = [];
+  for(let i=0;i<lead;i++) cells.push('<div></div>');
+  for(let d=1; d<=days; d++){
+    const ds = `${mk}-${pad(d)}`, list = (byDay[ds]||[]).filter(x=>!x.done);
+    const kinds = [...new Set(list.map(x=>x.kind))];
+    const overdue = ds < t && list.length;
+    cells.push(`<button class="cday ${ds===t?'today':''} ${ui.calDay===ds?'sel':''} ${overdue?'late':''}" onclick="ui.calDay=(ui.calDay==='${ds}'?null:'${ds}');render()">
+      <span class="cn">${d}</span><span class="cdots">${kinds.map(k=>`<i class="d-${k}"></i>`).join('')}</span></button>`);
+  }
+  let below;
+  if(ui.calDay){
+    const list = byDay[ui.calDay] || [];
+    below = `<h3>${parse(ui.calDay).toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long'})}</h3>` +
+      (list.length ? list.map(calRow).join('') : `<div class="empty">Nothing on this day.</div>`);
+  } else {
+    const soon = feed().filter(x => x.kind!=='date' && upFilterOk(x.kind) && daysUntil(x.date) <= 7)
+      .sort((a,b)=>a.date.localeCompare(b.date));
+    below = `<h3>Today &amp; next 7 days</h3>` + (soon.length ? soon.map(x=>feedRow(x,true)).join('') : `<div class="empty">Nothing due this week 🎉</div>`);
+  }
   return `
-    <div class="chips">${chips.map(([k,l])=>`<button class="chip ${f===k?'on':''}" onclick="ui.upFilter='${k}';render()">${l}</button>`).join('')}</div>
-    ${items.length ? groups.map(([g,fn])=>{ const gi=items.filter(fn); return gi.length?`<h3>${g}</h3>`+gi.map(x=>feedRow(x,true)).join(''):''; }).join('')
-      : `<div class="empty">Nothing coming up. Payments come from Money → Obligations; tap + for a to-do reminder like a vehicle service.</div>`}
-  `;
+    <div class="monthnav">
+      <button class="iconbtn" onclick="shiftCal(-1)">‹</button>
+      <div style="text-align:center"><div class="mtitle">${monthName(mk)}</div>
+        ${mk!==monthKey() ? `<div class="sub"><a href="#" onclick="ui.calMonth=null;ui.calDay=null;render();return false">Back to today</a></div>` : ''}</div>
+      <button class="iconbtn" onclick="shiftCal(1)">›</button>
+    </div>
+    <div class="card cal">
+      <div class="cgrid chead">${['M','T','W','T','F','S','S'].map(d=>`<div>${d}</div>`).join('')}</div>
+      <div class="cgrid">${cells.join('')}</div>
+      <div class="clegend"><span><i class="d-pay"></i>Payment</span><span><i class="d-rem"></i>Reminder</span><span><i class="d-task"></i>Task</span></div>
+    </div>
+    ${below}`;
 }
 function doneReminder(id){
   const r = S.reminders.find(x=>x.id===id); const was = {date:r.date, done:r.done};
